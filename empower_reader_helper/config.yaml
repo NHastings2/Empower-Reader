@@ -1,5 +1,5 @@
 name: "Empower Reader Helper"
-version: "0.1.0"
+version: "0.1.1"
 slug: "empower_reader_helper"
 description: "Playwright-based helper that logs into Empower and writes parsed data for the Empower Reader integration."
 url: "https://github.com/NHastings2/empower-reader"
