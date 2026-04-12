@@ -56,7 +56,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    coordinator: EmpowerDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: EmpowerDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     async_add_entities(
         EmpowerSensor(coordinator, entry, description) for description in SENSORS
     )

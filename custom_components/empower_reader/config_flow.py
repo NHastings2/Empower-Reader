@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import voluptuous as vol
 from aiohttp import CookieJar, ClientSession
 from homeassistant import config_entries
@@ -17,6 +19,8 @@ from .const import (
     DEFAULT_SCAN_INTERVAL_MINUTES,
     DOMAIN,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
@@ -40,7 +44,7 @@ OPTIONS_SCHEMA = vol.Schema(
 
 
 async def _validate_input(data: dict[str, str]) -> str:
-    session = ClientSession(cookie_jar=CookieJar(unsafe=True))
+    session = ClientSession(cookie_jar=CookieJar(unsafe=True), trust_env=False)
     try:
         client = EmpowerClient(
             session,
@@ -68,10 +72,13 @@ class EmpowerReaderConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             try:
                 unique_id = await _validate_input(user_input)
             except EmpowerAuthError:
+                _LOGGER.warning("Empower authentication failed during config flow")
                 errors["base"] = "invalid_auth"
-            except EmpowerConnectionError:
+            except EmpowerConnectionError as exc:
+                _LOGGER.warning("Empower connection test failed during config flow: %s", exc)
                 errors["base"] = "cannot_connect"
             except Exception:
+                _LOGGER.exception("Unexpected error during Empower config flow validation")
                 errors["base"] = "unknown"
             else:
                 await self.async_set_unique_id(unique_id)
