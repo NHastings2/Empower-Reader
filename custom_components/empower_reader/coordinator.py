@@ -177,7 +177,12 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
 
     def _point_hour_start(self, point: EmpowerPoint) -> Any:
         point_start = self._point_start(point)
-        return point_start.replace(minute=0, second=0, microsecond=0)
+        return point_start.replace(
+            minute=0,
+            second=0,
+            microsecond=0,
+            tzinfo=None,
+        )
 
     def _parse_cached_point_time(self, raw: str) -> Any | None:
         parsed = dt_util.parse_datetime(raw)
