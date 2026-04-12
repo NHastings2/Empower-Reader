@@ -8,6 +8,7 @@ DEFAULT_NAME = "Empower Reader"
 DEFAULT_SCAN_INTERVAL_MINUTES = 30
 DEFAULT_SCAN_INTERVAL = timedelta(minutes=DEFAULT_SCAN_INTERVAL_MINUTES)
 DEFAULT_DATA_FILE = "empower_reader/latest.json"
+ENERGY_STATISTIC_UNIT = "kWh"
 
 CONF_DATA_FILE = "data_file"
 CONF_SCAN_INTERVAL_MINUTES = "scan_interval_minutes"

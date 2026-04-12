@@ -16,6 +16,7 @@ from homeassistant.const import UnitOfEnergy, UnitOfPower
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from .coordinator import EmpowerDataUpdateCoordinator
@@ -72,14 +73,34 @@ SENSORS: tuple[EmpowerSensorDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda snapshot: _helper_age_minutes(snapshot.data.fetched_at),
     ),
+    EmpowerSensorDescription(
+        key="last_imported_interval",
+        translation_key="last_imported_interval",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda snapshot: snapshot.imported_through,
+    ),
 )
 
 
 def _helper_age_minutes(fetched_at: datetime | None) -> float | None:
     if fetched_at is None:
         return None
-    now = datetime.now(fetched_at.tzinfo or fetched_at.astimezone().tzinfo)
-    return round(max((now - fetched_at).total_seconds(), 0) / 60, 1)
+    normalized = _normalize_timestamp(fetched_at)
+    if normalized is None:
+        return None
+    return round(max((dt_util.utcnow() - normalized).total_seconds(), 0) / 60, 1)
+
+
+def _normalize_timestamp(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        local_tz = dt_util.DEFAULT_TIME_ZONE
+        if local_tz is None:
+            return value.replace(tzinfo=dt_util.UTC)
+        value = value.replace(tzinfo=local_tz)
+    return dt_util.as_utc(value)
 
 
 async def async_setup_entry(
@@ -112,7 +133,10 @@ class EmpowerSensor(
 
     @property
     def native_value(self) -> Any:
-        return self.entity_description.value_fn(self.coordinator.data)
+        value = self.entity_description.value_fn(self.coordinator.data)
+        if isinstance(value, datetime):
+            return _normalize_timestamp(value)
+        return value
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -133,4 +157,9 @@ class EmpowerSensor(
             "meter_number": data.meter_number,
             "service_point_id": data.sdp,
             "helper_fetched_at": data.fetched_at.isoformat() if data.fetched_at else None,
+            "imported_through": (
+                self.coordinator.data.imported_through.isoformat()
+                if self.coordinator.data.imported_through
+                else None
+            ),
         }

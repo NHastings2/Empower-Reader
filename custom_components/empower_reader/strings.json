@@ -53,6 +53,9 @@
       },
       "helper_data_age_minutes": {
         "name": "Helper data age"
+      },
+      "last_imported_interval": {
+        "name": "Last imported interval"
       }
     }
   }

@@ -18,8 +18,11 @@ This repository contains two Home Assistant pieces that work together:
 
 - Call the `empower_reader.refresh` service to force an immediate reload of the latest helper data.
 - `sensor.empower_reader_electric_total` is the native long-term energy sensor intended for Home Assistant Energy dashboard use.
+- New 15-minute intervals are imported into Home Assistant using the original Empower interval timestamps, so delayed batches still land in the Energy dashboard at the correct historical times.
 - `sensor.empower_reader_electric_estimated_demand` is a derived watts sensor based on the last 15-minute interval and is useful for dashboards, but it is not a true live real-time demand feed.
 - `sensor.empower_reader_helper_last_fetch` and `sensor.empower_reader_helper_data_age` help you see when the helper data is stale.
+- `sensor.empower_reader_last_imported_interval` shows the most recent 15-minute interval timestamp that was successfully imported into Home Assistant.
+- `sensor.empower_reader_electric_last_interval_time` shows the most recent interval timestamp reported in the current Empower helper file.
 
 ## Why this split exists
 
