@@ -14,6 +14,13 @@ This repository contains two Home Assistant pieces that work together:
 5. Add the integration from Settings > Devices & Services.
 6. Use `empower_reader/latest.json` as the helper data file unless you changed the helper output path.
 
+## Refresh and Energy
+
+- Call the `empower_reader.refresh` service to force an immediate reload of the latest helper data.
+- `sensor.empower_reader_electric_total` is the native long-term energy sensor intended for Home Assistant Energy dashboard use.
+- `sensor.empower_reader_electric_estimated_demand` is a derived watts sensor based on the last 15-minute interval and is useful for dashboards, but it is not a true live real-time demand feed.
+- `sensor.empower_reader_helper_last_fetch` and `sensor.empower_reader_helper_data_age` help you see when the helper data is stale.
+
 ## Why this split exists
 
 Empower serves an anti-bot challenge on direct non-browser login requests. The helper add-on handles that with Playwright, while the integration stays lightweight and creates native Home Assistant entities directly.

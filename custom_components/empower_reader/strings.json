@@ -28,6 +28,12 @@
       }
     }
   },
+  "services": {
+    "refresh": {
+      "name": "Refresh",
+      "description": "Force the integration to reload the latest helper data immediately."
+    }
+  },
   "entity": {
     "sensor": {
       "electric_total_kwh": {
@@ -38,6 +44,15 @@
       },
       "electric_last_interval_time": {
         "name": "Electric last interval time"
+      },
+      "electric_estimated_demand": {
+        "name": "Electric estimated demand"
+      },
+      "helper_last_fetch": {
+        "name": "Helper last fetch"
+      },
+      "helper_data_age_minutes": {
+        "name": "Helper data age"
       }
     }
   }

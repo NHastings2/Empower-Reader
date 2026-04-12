@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from dataclasses import dataclass
 from typing import Any
 
@@ -10,9 +11,9 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfEnergy
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
+from homeassistant.const import UnitOfEnergy, UnitOfPower
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -48,7 +49,37 @@ SENSORS: tuple[EmpowerSensorDescription, ...] = (
         device_class=SensorDeviceClass.TIMESTAMP,
         value_fn=lambda snapshot: snapshot.data.last_interval_time,
     ),
+    EmpowerSensorDescription(
+        key="electric_estimated_demand",
+        translation_key="electric_estimated_demand",
+        device_class=SensorDeviceClass.POWER,
+        native_unit_of_measurement=UnitOfPower.WATT,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda snapshot: round(snapshot.data.last_interval_kwh * 4000, 1),
+    ),
+    EmpowerSensorDescription(
+        key="helper_last_fetch",
+        translation_key="helper_last_fetch",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda snapshot: snapshot.data.fetched_at,
+    ),
+    EmpowerSensorDescription(
+        key="helper_data_age_minutes",
+        translation_key="helper_data_age_minutes",
+        native_unit_of_measurement="min",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda snapshot: _helper_age_minutes(snapshot.data.fetched_at),
+    ),
 )
+
+
+def _helper_age_minutes(fetched_at: datetime | None) -> float | None:
+    if fetched_at is None:
+        return None
+    now = datetime.now(fetched_at.tzinfo or fetched_at.astimezone().tzinfo)
+    return round(max((now - fetched_at).total_seconds(), 0) / 60, 1)
 
 
 async def async_setup_entry(

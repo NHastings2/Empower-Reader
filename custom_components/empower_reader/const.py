@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 DOMAIN = "empower_reader"
+SERVICE_REFRESH = "refresh"
 DEFAULT_NAME = "Empower Reader"
 DEFAULT_SCAN_INTERVAL_MINUTES = 30
 DEFAULT_SCAN_INTERVAL = timedelta(minutes=DEFAULT_SCAN_INTERVAL_MINUTES)
