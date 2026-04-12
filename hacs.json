@@ -1,0 +1,7 @@
+{
+  "name": "Empower Reader",
+  "content_in_root": false,
+  "domains": ["empower_reader"],
+  "render_readme": true,
+  "homeassistant": "2025.1.0"
+}

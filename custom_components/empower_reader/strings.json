@@ -1,0 +1,47 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Empower",
+        "description": "Enter your Empower login details.",
+        "data": {
+          "username": "Username",
+          "password": "Password",
+          "login_url": "Login URL",
+          "dashboard_url": "Dashboard URL"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to Empower",
+      "invalid_auth": "Invalid username or password",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "This Empower account is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Empower Reader options",
+        "data": {
+          "scan_interval_minutes": "Polling interval in minutes"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "electric_total_kwh": {
+        "name": "Electric total"
+      },
+      "electric_last_interval_kwh": {
+        "name": "Electric last interval"
+      },
+      "electric_last_interval_time": {
+        "name": "Electric last interval time"
+      }
+    }
+  }
+}

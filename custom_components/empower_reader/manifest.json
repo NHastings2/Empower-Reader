@@ -1,0 +1,13 @@
+{
+  "domain": "empower_reader",
+  "name": "Empower Reader",
+  "codeowners": ["@NHastings2"],
+  "config_flow": true,
+  "documentation": "https://github.com/NHastings2/empower-reader",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/NHastings2/empower-reader/issues",
+  "loggers": ["custom_components.empower_reader"],
+  "requirements": ["beautifulsoup4==4.14.3"],
+  "version": "0.2.0"
+}
