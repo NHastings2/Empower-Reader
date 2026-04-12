@@ -181,7 +181,7 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
             minute=0,
             second=0,
             microsecond=0,
-            tzinfo=None,
+            tzinfo=dt_util.UTC,
         )
 
     def _parse_cached_point_time(self, raw: str) -> Any | None:
@@ -239,6 +239,11 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
             )
 
         if total_rows:
+            _LOGGER.debug(
+                "Importing %s hourly statistics rows starting at %s",
+                len(total_rows),
+                [row.get("start") if isinstance(row, dict) else getattr(row, "start", None) for row in total_rows[:3]],
+            )
             await async_add_external_statistics(self._hass, total_metadata, total_rows)
         return running_total
 
