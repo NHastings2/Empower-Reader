@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -174,6 +175,10 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
             aware = point.ts
         return dt_util.as_utc(aware)
 
+    def _point_hour_start(self, point: EmpowerPoint) -> Any:
+        point_start = self._point_start(point)
+        return point_start.replace(minute=0, second=0, microsecond=0)
+
     def _parse_cached_point_time(self, raw: str) -> Any | None:
         parsed = dt_util.parse_datetime(raw)
         if parsed is None:
@@ -209,10 +214,16 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
 
         running_total = total_before
         total_rows: list[Any] = []
+        bucketed_points: dict[Any, list[EmpowerPoint]] = defaultdict(list)
 
         for point in new_points:
-            start = self._point_start(point)
-            running_total += point.kwh
+            bucketed_points[self._point_hour_start(point)].append(point)
+
+        for start in sorted(bucketed_points):
+            points = sorted(bucketed_points[start], key=lambda item: item.ts)
+            if len(points) < 4:
+                continue
+            running_total += round(sum(point.kwh for point in points), 3)
 
             total_rows.append(
                 self._statistic_data(
@@ -222,7 +233,8 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
                 )
             )
 
-        await async_add_external_statistics(self._hass, total_metadata, total_rows)
+        if total_rows:
+            await async_add_external_statistics(self._hass, total_metadata, total_rows)
         return running_total
 
     async def _async_load_cache(self) -> dict[str, Any]:
@@ -255,8 +267,19 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
             self.config_entry.entry_id, "electric_total_kwh"
         )
         cached_statistic_id = str(electric.get("statistic_id", ""))
-        last_ts = str(electric.get("last_ts", ""))
+        last_seen_ts = str(electric.get("last_seen_ts", electric.get("last_ts", "")))
+        imported_through_ts = str(
+            electric.get("imported_through_ts", electric.get("last_ts", ""))
+        )
         total_kwh = float(electric.get("total_kwh", 0.0))
+        pending_points = [
+            EmpowerPoint(
+                ts=dt_util.parse_datetime(item["ts"]) or dt_util.utcnow(),
+                kwh=float(item["kwh"]),
+            )
+            for item in electric.get("pending_points", [])
+            if isinstance(item, dict) and "ts" in item and "kwh" in item
+        ]
 
         if cached_statistic_id and cached_statistic_id != total_statistic_id:
             _LOGGER.info(
@@ -264,34 +287,66 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
                 cached_statistic_id,
                 total_statistic_id,
             )
-            last_ts = ""
+            last_seen_ts = ""
+            imported_through_ts = ""
             total_kwh = 0.0
+            pending_points = []
 
         new_points: list[EmpowerPoint] = []
 
         for point in data.points:
             point_iso = point.ts.isoformat()
-            if last_ts and point_iso <= last_ts:
+            if last_seen_ts and point_iso <= last_seen_ts:
                 continue
             new_points.append(point)
 
+        candidate_points = sorted(
+            pending_points + new_points,
+            key=lambda item: item.ts,
+        )
+        bucketed_points: dict[Any, list[EmpowerPoint]] = defaultdict(list)
+        for point in candidate_points:
+            bucketed_points[self._point_hour_start(point)].append(point)
+
+        importable_points: list[EmpowerPoint] = []
+        retained_pending_points: list[EmpowerPoint] = []
+        last_imported_raw_ts = imported_through_ts
+
+        for hour_start in sorted(bucketed_points):
+            points = sorted(bucketed_points[hour_start], key=lambda item: item.ts)
+            if len(points) >= 4:
+                importable_points.extend(points)
+                last_imported_raw_ts = points[-1].ts.isoformat()
+            else:
+                retained_pending_points.extend(points)
+
         imported_total = await self._async_import_interval_statistics(
-            new_points=new_points,
+            new_points=importable_points,
             total_before=total_kwh,
         )
-        newest_ts = last_ts
+        newest_seen_ts = last_seen_ts
         if new_points:
-            newest_ts = new_points[-1].ts.isoformat()
+            newest_seen_ts = new_points[-1].ts.isoformat()
         elif data.points:
-            newest_ts = data.points[-1].ts.isoformat()
+            newest_seen_ts = data.points[-1].ts.isoformat()
 
         cache["electric"] = {
-            "last_ts": newest_ts,
+            "last_seen_ts": newest_seen_ts,
+            "last_ts": last_imported_raw_ts,
             "total_kwh": imported_total,
             "statistic_id": total_statistic_id,
+            "imported_through_ts": last_imported_raw_ts,
+            "pending_points": [
+                {"ts": point.ts.isoformat(), "kwh": point.kwh}
+                for point in retained_pending_points
+            ],
         }
         await self._async_save_cache()
-        imported_through = self._parse_cached_point_time(newest_ts) if newest_ts else None
+        imported_through = (
+            self._parse_cached_point_time(last_imported_raw_ts)
+            if last_imported_raw_ts
+            else None
+        )
         return EmpowerSnapshot(
             data=data,
             total_kwh=imported_total,
