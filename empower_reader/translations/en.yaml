@@ -1,0 +1,29 @@
+configuration:
+  empower_username:
+    name: Empower username
+  empower_password:
+    name: Empower password
+  mqtt_host:
+    name: MQTT host
+  mqtt_port:
+    name: MQTT port
+  mqtt_user:
+    name: MQTT username
+  mqtt_password:
+    name: MQTT password
+  poll_interval_minutes:
+    name: Poll interval minutes
+  headless:
+    name: Headless browser
+  try_headless_first:
+    name: Try headless first
+  login_url:
+    name: Login URL
+  dashboard_url:
+    name: Dashboard URL
+  device_id:
+    name: Device ID
+  device_name:
+    name: Device name
+  discovery_prefix:
+    name: MQTT discovery prefix
