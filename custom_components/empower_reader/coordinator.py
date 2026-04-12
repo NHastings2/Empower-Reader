@@ -87,36 +87,83 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
         if StatisticMetaData is None:
             raise UpdateFailed("Recorder statistics API is unavailable")
 
-        params = inspect.signature(StatisticMetaData).parameters
         kwargs: dict[str, Any] = {
             "statistic_id": statistic_id,
             "source": DOMAIN,
             "name": name,
             "unit_of_measurement": unit_of_measurement,
         }
-
-        if "has_sum" in params:
-            kwargs["has_sum"] = has_sum
-        if "has_mean" in params:
-            kwargs["has_mean"] = has_mean
-        if "unit_class" in params:
-            kwargs["unit_class"] = unit_class
-        if "mean_type" in params and StatisticMeanType is not None:
-            kwargs["mean_type"] = (
+        optional_kwargs: dict[str, Any] = {
+            "has_sum": has_sum,
+            "has_mean": has_mean,
+            "unit_class": unit_class,
+        }
+        if StatisticMeanType is not None:
+            optional_kwargs["mean_type"] = (
                 StatisticMeanType.ARITHMETIC
                 if has_mean
                 else StatisticMeanType.NONE
             )
 
-        return StatisticMetaData(**kwargs)
+        if StatisticMetaData is dict:
+            return {
+                **kwargs,
+                **{key: value for key, value in optional_kwargs.items() if value is not None},
+            }
+
+        try:
+            params = inspect.signature(StatisticMetaData).parameters
+        except (TypeError, ValueError):
+            params = {}
+
+        if params:
+            for key, value in optional_kwargs.items():
+                if key in params and value is not None:
+                    kwargs[key] = value
+            return StatisticMetaData(**kwargs)
+
+        for key, value in optional_kwargs.items():
+            if value is not None:
+                kwargs[key] = value
+
+        try:
+            return StatisticMetaData(**kwargs)
+        except TypeError:
+            minimal_kwargs = {
+                "statistic_id": statistic_id,
+                "source": DOMAIN,
+                "name": name,
+                "unit_of_measurement": unit_of_measurement,
+            }
+            return StatisticMetaData(**minimal_kwargs)
 
     def _statistic_data(self, **raw: Any) -> Any:
         if StatisticData is None:
             raise UpdateFailed("Recorder statistics API is unavailable")
 
-        params = inspect.signature(StatisticData).parameters
-        kwargs = {key: value for key, value in raw.items() if key in params}
-        return StatisticData(**kwargs)
+        if StatisticData is dict:
+            return raw
+
+        try:
+            params = inspect.signature(StatisticData).parameters
+        except (TypeError, ValueError):
+            params = {}
+
+        if params:
+            kwargs = {key: value for key, value in raw.items() if key in params}
+            return StatisticData(**kwargs)
+
+        try:
+            return StatisticData(**raw)
+        except TypeError:
+            minimal_kwargs = {
+                key: value
+                for key, value in raw.items()
+                if key in {"start", "state", "sum", "mean", "min", "max", "last_reset"}
+            }
+            if "start" not in minimal_kwargs:
+                raise UpdateFailed("Recorder statistics data requires a start timestamp")
+            return StatisticData(**minimal_kwargs)
 
     def _point_start(self, point: EmpowerPoint) -> Any:
         if point.ts.tzinfo is None:
