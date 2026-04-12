@@ -22,6 +22,7 @@ from .const import (
     DOMAIN,
     ENERGY_STATISTIC_UNIT,
     STORAGE_VERSION,
+    external_statistic_id,
     sensor_entity_id,
 )
 
@@ -193,7 +194,9 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
         if async_add_external_statistics is None:
             raise UpdateFailed("Recorder statistics import API is unavailable")
 
-        total_statistic_id = sensor_entity_id("electric_total_kwh")
+        total_statistic_id = external_statistic_id(
+            self.config_entry.entry_id, "electric_total_kwh"
+        )
 
         total_metadata = self._statistic_metadata(
             statistic_id=total_statistic_id,
@@ -248,7 +251,9 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
 
         cache = await self._async_load_cache()
         electric = cache.get("electric", {})
-        total_statistic_id = sensor_entity_id("electric_total_kwh")
+        total_statistic_id = external_statistic_id(
+            self.config_entry.entry_id, "electric_total_kwh"
+        )
         cached_statistic_id = str(electric.get("statistic_id", ""))
         last_ts = str(electric.get("last_ts", ""))
         total_kwh = float(electric.get("total_kwh", 0.0))

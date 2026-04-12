@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import re
 
 DOMAIN = "empower_reader"
 SERVICE_REFRESH = "refresh"
@@ -22,3 +23,8 @@ def sensor_entity_id(key: str) -> str:
 
 def button_entity_id(key: str) -> str:
     return f"button.{DOMAIN}_{key}"
+
+
+def external_statistic_id(entry_id: str, key: str) -> str:
+    safe_entry_id = re.sub(r"[^a-z0-9_]+", "_", entry_id.lower()).strip("_")
+    return f"{DOMAIN}:{safe_entry_id}_{key}"
