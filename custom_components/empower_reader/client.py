@@ -5,7 +5,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 from aiohttp import ClientError, ClientResponseError, ClientSession
 from bs4 import BeautifulSoup
@@ -17,6 +17,18 @@ STEP = timedelta(minutes=15)
 
 USERNAME_FIELD = "Input.UserName"
 PASSWORD_FIELD = "Input.Password"
+DEFAULT_HEADERS = {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+    "Upgrade-Insecure-Requests": "1",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/123.0.0.0 Safari/537.36"
+    ),
+}
 
 
 class EmpowerError(Exception):
@@ -193,10 +205,15 @@ class EmpowerClient:
         self._password = password
         self._login_url = login_url
         self._dashboard_url = dashboard_url
+        self._origin = f"{urlsplit(login_url).scheme}://{urlsplit(login_url).netloc}"
 
     async def async_fetch_data(self) -> EmpowerData:
         try:
-            async with self._session.get(self._login_url) as response:
+            async with self._session.get(
+                self._login_url,
+                headers=DEFAULT_HEADERS,
+                allow_redirects=True,
+            ) as response:
                 response.raise_for_status()
                 login_html = await response.text()
         except (ClientResponseError, ClientError) as exc:
@@ -210,7 +227,18 @@ class EmpowerClient:
         form_data[PASSWORD_FIELD] = self._password
 
         try:
-            async with self._session.post(login_action, data=form_data, allow_redirects=True) as response:
+            post_headers = {
+                **DEFAULT_HEADERS,
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Origin": self._origin,
+                "Referer": self._login_url,
+            }
+            async with self._session.post(
+                login_action,
+                data=form_data,
+                headers=post_headers,
+                allow_redirects=True,
+            ) as response:
                 response.raise_for_status()
                 post_login_html = await response.text()
         except (ClientResponseError, ClientError) as exc:
@@ -220,7 +248,15 @@ class EmpowerClient:
             raise EmpowerAuthError("Empower login was rejected")
 
         try:
-            async with self._session.get(self._dashboard_url) as response:
+            dashboard_headers = {
+                **DEFAULT_HEADERS,
+                "Referer": self._login_url,
+            }
+            async with self._session.get(
+                self._dashboard_url,
+                headers=dashboard_headers,
+                allow_redirects=True,
+            ) as response:
                 response.raise_for_status()
                 dashboard_html = await response.text()
         except (ClientResponseError, ClientError) as exc:
