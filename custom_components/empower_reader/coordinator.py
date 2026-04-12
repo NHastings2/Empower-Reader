@@ -90,7 +90,7 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
 
         kwargs: dict[str, Any] = {
             "statistic_id": statistic_id,
-            "source": DOMAIN,
+            "source": "external",
             "name": name,
             "unit_of_measurement": unit_of_measurement,
         }
@@ -132,7 +132,7 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
         except TypeError:
             minimal_kwargs = {
                 "statistic_id": statistic_id,
-                "source": DOMAIN,
+                "source": "external",
                 "name": name,
                 "unit_of_measurement": unit_of_measurement,
             }

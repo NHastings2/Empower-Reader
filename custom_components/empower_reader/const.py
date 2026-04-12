@@ -27,4 +27,4 @@ def button_entity_id(key: str) -> str:
 
 def external_statistic_id(entry_id: str, key: str) -> str:
     safe_entry_id = re.sub(r"[^a-z0-9_]+", "_", entry_id.lower()).strip("_")
-    return f"{DOMAIN}:{safe_entry_id}_{key}"
+    return f"external:{DOMAIN}_{safe_entry_id}_{key}"
