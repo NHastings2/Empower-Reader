@@ -1,46 +1,21 @@
 from __future__ import annotations
 
 import json
-import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlsplit
 
-from aiohttp import ClientError, ClientResponseError, ClientSession
-from bs4 import BeautifulSoup
 
-from .const import DEFAULT_DASHBOARD_URL, DEFAULT_LOGIN_URL
-
-_LOGGER = logging.getLogger(__name__)
 STEP = timedelta(minutes=15)
-
-USERNAME_FIELD = "Input.UserName"
-PASSWORD_FIELD = "Input.Password"
-DEFAULT_HEADERS = {
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Cache-Control": "no-cache",
-    "Pragma": "no-cache",
-    "Upgrade-Insecure-Requests": "1",
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/123.0.0.0 Safari/537.36"
-    ),
-}
 
 
 class EmpowerError(Exception):
     """Base exception for Empower integration errors."""
 
 
-class EmpowerAuthError(EmpowerError):
-    """Raised when login fails."""
-
-
 class EmpowerConnectionError(EmpowerError):
-    """Raised when the remote site cannot be reached or parsed."""
+    """Raised when helper data cannot be loaded or parsed."""
 
 
 @dataclass(frozen=True)
@@ -57,48 +32,8 @@ class EmpowerData:
     sdp: str | None
     last_interval_time: datetime
     last_interval_kwh: float
+    fetched_at: datetime | None
     points: list[EmpowerPoint]
-
-
-def _looks_like_bot_page(html: str) -> bool:
-    return "_Incapsula_Resource" in html and USERNAME_FIELD not in html
-
-
-def _extract_first_balanced_object(text: str) -> str:
-    start = text.find("{")
-    if start == -1:
-        raise EmpowerConnectionError("No JSON object found in dashboard script")
-
-    depth = 0
-    in_string = False
-    quote = ""
-    escape = False
-
-    for index in range(start, len(text)):
-        char = text[index]
-
-        if in_string:
-            if escape:
-                escape = False
-            elif char == "\\":
-                escape = True
-            elif char == quote:
-                in_string = False
-            continue
-
-        if char in {'"', "'"}:
-            in_string = True
-            quote = char
-            continue
-
-        if char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start : index + 1]
-
-    raise EmpowerConnectionError("Dashboard JSON object appears incomplete")
 
 
 def _parse_points(payload: dict[str, Any]) -> list[EmpowerPoint]:
@@ -108,8 +43,8 @@ def _parse_points(payload: dict[str, Any]) -> list[EmpowerPoint]:
 
     start = datetime.fromisoformat(meter_reads["readsStartDate"])
     end = datetime.fromisoformat(meter_reads["readsEndDate"])
+    raw_values: list[float] = []
 
-    raw_values = []
     for raw in str(meter_reads.get("deliveredReads", "")).split(","):
         value = raw.strip()
         raw_values.append(float(value) if value else 0.0)
@@ -129,54 +64,26 @@ def _parse_points(payload: dict[str, Any]) -> list[EmpowerPoint]:
     ]
 
 
-def _parse_payload_from_dashboard(html: str) -> dict[str, Any]:
-    soup = BeautifulSoup(html, "html.parser")
-    errors: list[str] = []
+def _build_data(document: dict[str, Any]) -> EmpowerData:
+    payload = document.get("payload")
+    if not isinstance(payload, dict):
+        raise EmpowerConnectionError("Helper data file is missing a payload object")
 
-    for index, script in enumerate(soup.find_all("script")):
-        text = script.string
-        if not text or "customerSDPPackage" not in text:
-            continue
-
-        try:
-            return json.loads(_extract_first_balanced_object(text))
-        except Exception as exc:
-            errors.append(f"{index}:{exc}")
-
-    raise EmpowerConnectionError(
-        "Unable to locate customerSDPPackage in dashboard HTML. "
-        f"Sample errors: {'; '.join(errors[:3])}"
-    )
-
-
-def _parse_login_form(html: str, login_url: str) -> tuple[str, dict[str, str]]:
-    soup = BeautifulSoup(html, "html.parser")
-    form = soup.find("form")
-    if form is None:
-        raise EmpowerConnectionError("Could not find login form on Empower login page")
-
-    action = form.get("action") or login_url
-    form_url = urljoin(login_url, action)
-    payload: dict[str, str] = {}
-
-    for field in form.find_all("input"):
-        name = field.get("name")
-        if not name or name in {USERNAME_FIELD, PASSWORD_FIELD}:
-            continue
-        payload[name] = field.get("value", "")
-
-    return form_url, payload
-
-
-def _build_data(payload: dict[str, Any]) -> EmpowerData:
     points = _parse_points(payload)
     if not points:
-        raise EmpowerConnectionError("Empower returned no interval data")
+        raise EmpowerConnectionError("Helper data file did not include interval data")
 
     customer = None
     meters = payload.get("customerMeters")
     if isinstance(meters, list) and meters and isinstance(meters[0], dict):
         customer = meters[0]
+
+    fetched_at_raw = document.get("fetched_at")
+    fetched_at = (
+        datetime.fromisoformat(fetched_at_raw)
+        if isinstance(fetched_at_raw, str) and fetched_at_raw
+        else None
+    )
 
     return EmpowerData(
         customer_name=customer.get("customerName") if customer else None,
@@ -185,89 +92,32 @@ def _build_data(payload: dict[str, Any]) -> EmpowerData:
         sdp=customer.get("sdp") if customer else None,
         last_interval_time=points[-1].ts,
         last_interval_kwh=points[-1].kwh,
+        fetched_at=fetched_at,
         points=points,
     )
 
 
 class EmpowerClient:
-    """HTTP client for fetching Empower dashboard data."""
+    """Read and parse helper output produced by the Playwright add-on."""
 
-    def __init__(
-        self,
-        session: ClientSession,
-        username: str,
-        password: str,
-        login_url: str = DEFAULT_LOGIN_URL,
-        dashboard_url: str = DEFAULT_DASHBOARD_URL,
-    ) -> None:
-        self._session = session
-        self._username = username
-        self._password = password
-        self._login_url = login_url
-        self._dashboard_url = dashboard_url
-        self._origin = f"{urlsplit(login_url).scheme}://{urlsplit(login_url).netloc}"
+    def __init__(self, data_path: Path) -> None:
+        self._data_path = data_path
 
-    async def async_fetch_data(self) -> EmpowerData:
-        try:
-            async with self._session.get(
-                self._login_url,
-                headers=DEFAULT_HEADERS,
-                allow_redirects=True,
-            ) as response:
-                response.raise_for_status()
-                login_html = await response.text()
-        except (ClientResponseError, ClientError) as exc:
-            raise EmpowerConnectionError(f"Unable to load login page: {exc}") from exc
-
-        if _looks_like_bot_page(login_html):
-            raise EmpowerConnectionError("Empower served an anti-bot challenge on login")
-
-        login_action, form_data = _parse_login_form(login_html, self._login_url)
-        form_data[USERNAME_FIELD] = self._username
-        form_data[PASSWORD_FIELD] = self._password
+    def fetch_data(self) -> EmpowerData:
+        if not self._data_path.exists():
+            raise EmpowerConnectionError(
+                f"Helper data file not found: {self._data_path}"
+            )
 
         try:
-            post_headers = {
-                **DEFAULT_HEADERS,
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Origin": self._origin,
-                "Referer": self._login_url,
-            }
-            async with self._session.post(
-                login_action,
-                data=form_data,
-                headers=post_headers,
-                allow_redirects=True,
-            ) as response:
-                response.raise_for_status()
-                post_login_html = await response.text()
-        except (ClientResponseError, ClientError) as exc:
-            raise EmpowerConnectionError(f"Login request failed: {exc}") from exc
+            document = json.loads(self._data_path.read_text(encoding="utf-8"))
+        except OSError as exc:
+            raise EmpowerConnectionError(
+                f"Unable to read helper data file: {exc}"
+            ) from exc
+        except json.JSONDecodeError as exc:
+            raise EmpowerConnectionError(
+                f"Helper data file is not valid JSON: {exc}"
+            ) from exc
 
-        if USERNAME_FIELD in post_login_html and "Forgot your" in post_login_html:
-            raise EmpowerAuthError("Empower login was rejected")
-
-        try:
-            dashboard_headers = {
-                **DEFAULT_HEADERS,
-                "Referer": self._login_url,
-            }
-            async with self._session.get(
-                self._dashboard_url,
-                headers=dashboard_headers,
-                allow_redirects=True,
-            ) as response:
-                response.raise_for_status()
-                dashboard_html = await response.text()
-        except (ClientResponseError, ClientError) as exc:
-            raise EmpowerConnectionError(f"Unable to load dashboard: {exc}") from exc
-
-        if _looks_like_bot_page(dashboard_html):
-            raise EmpowerConnectionError("Empower served an anti-bot challenge on dashboard")
-
-        if USERNAME_FIELD in dashboard_html and "Forgot your" in dashboard_html:
-            _LOGGER.debug("Dashboard redirected back to login page")
-            raise EmpowerAuthError("Empower session was not authenticated")
-
-        payload = _parse_payload_from_dashboard(dashboard_html)
-        return _build_data(payload)
+        return _build_data(document)

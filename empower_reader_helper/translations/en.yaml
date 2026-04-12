@@ -1,0 +1,17 @@
+configuration:
+  empower_username:
+    name: Empower username
+  empower_password:
+    name: Empower password
+  poll_interval_minutes:
+    name: Poll interval minutes
+  output_path:
+    name: Output path
+  login_url:
+    name: Login URL
+  dashboard_url:
+    name: Dashboard URL
+  headless:
+    name: Headless browser
+  try_headless_first:
+    name: Try headless first

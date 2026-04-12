@@ -101,4 +101,5 @@ class EmpowerSensor(
             "customer_address": data.customer_address,
             "meter_number": data.meter_number,
             "service_point_id": data.sdp,
+            "helper_fetched_at": data.fetched_at.isoformat() if data.fetched_at else None,
         }

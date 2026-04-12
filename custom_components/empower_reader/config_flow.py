@@ -1,21 +1,18 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import voluptuous as vol
-from aiohttp import CookieJar, ClientSession
 from homeassistant import config_entries
-from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 
-from .client import EmpowerAuthError, EmpowerClient, EmpowerConnectionError
+from .client import EmpowerClient, EmpowerConnectionError
 from .const import (
-    CONF_DASHBOARD_URL,
-    CONF_LOGIN_URL,
+    CONF_DATA_FILE,
     CONF_SCAN_INTERVAL_MINUTES,
-    DEFAULT_DASHBOARD_URL,
-    DEFAULT_LOGIN_URL,
+    DEFAULT_DATA_FILE,
     DEFAULT_SCAN_INTERVAL_MINUTES,
     DOMAIN,
 )
@@ -25,10 +22,7 @@ _LOGGER = logging.getLogger(__name__)
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_USERNAME): str,
-        vol.Required(CONF_PASSWORD): str,
-        vol.Optional(CONF_LOGIN_URL, default=DEFAULT_LOGIN_URL): str,
-        vol.Optional(CONF_DASHBOARD_URL, default=DEFAULT_DASHBOARD_URL): str,
+        vol.Required(CONF_DATA_FILE, default=DEFAULT_DATA_FILE): str,
     }
 )
 
@@ -43,21 +37,10 @@ OPTIONS_SCHEMA = vol.Schema(
 )
 
 
-async def _validate_input(data: dict[str, str]) -> str:
-    session = ClientSession(cookie_jar=CookieJar(unsafe=True), trust_env=False)
-    try:
-        client = EmpowerClient(
-            session,
-            username=data[CONF_USERNAME],
-            password=data[CONF_PASSWORD],
-            login_url=data.get(CONF_LOGIN_URL, DEFAULT_LOGIN_URL),
-            dashboard_url=data.get(CONF_DASHBOARD_URL, DEFAULT_DASHBOARD_URL),
-        )
-        empower_data = await client.async_fetch_data()
-    finally:
-        await session.close()
-
-    return empower_data.sdp or empower_data.meter_number or data[CONF_USERNAME]
+def _validate_input(data: dict[str, str], config_dir: str) -> str:
+    client = EmpowerClient(Path(config_dir) / data[CONF_DATA_FILE])
+    empower_data = client.fetch_data()
+    return empower_data.sdp or empower_data.meter_number or data[CONF_DATA_FILE]
 
 
 class EmpowerReaderConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -70,15 +53,14 @@ class EmpowerReaderConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             try:
-                unique_id = await _validate_input(user_input)
-            except EmpowerAuthError:
-                _LOGGER.warning("Empower authentication failed during config flow")
-                errors["base"] = "invalid_auth"
+                unique_id = await self.hass.async_add_executor_job(
+                    _validate_input, user_input, self.hass.config.config_dir
+                )
             except EmpowerConnectionError as exc:
-                _LOGGER.warning("Empower connection test failed during config flow: %s", exc)
+                _LOGGER.warning("Empower helper validation failed during config flow: %s", exc)
                 errors["base"] = "cannot_connect"
             except Exception:
-                _LOGGER.exception("Unexpected error during Empower config flow validation")
+                _LOGGER.exception("Unexpected error during Empower helper validation")
                 errors["base"] = "unknown"
             else:
                 await self.async_set_unique_id(unique_id)
@@ -86,12 +68,7 @@ class EmpowerReaderConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return self.async_create_entry(
                     title="Empower Reader",
                     data={
-                        CONF_USERNAME: user_input[CONF_USERNAME],
-                        CONF_PASSWORD: user_input[CONF_PASSWORD],
-                        CONF_LOGIN_URL: user_input.get(CONF_LOGIN_URL, DEFAULT_LOGIN_URL),
-                        CONF_DASHBOARD_URL: user_input.get(
-                            CONF_DASHBOARD_URL, DEFAULT_DASHBOARD_URL
-                        ),
+                        CONF_DATA_FILE: user_input[CONF_DATA_FILE],
                         CONF_SCAN_INTERVAL_MINUTES: DEFAULT_SCAN_INTERVAL_MINUTES,
                     },
                 )
@@ -120,6 +97,10 @@ class EmpowerReaderOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(data=user_input)
 
+        default_data_file = self.config_entry.options.get(
+            CONF_DATA_FILE,
+            self.config_entry.data.get(CONF_DATA_FILE, DEFAULT_DATA_FILE),
+        )
         default_interval = self.config_entry.options.get(
             CONF_SCAN_INTERVAL_MINUTES,
             self.config_entry.data.get(
@@ -130,6 +111,10 @@ class EmpowerReaderOptionsFlow(config_entries.OptionsFlow):
             step_id="init",
             data_schema=vol.Schema(
                 {
+                    vol.Required(
+                        CONF_DATA_FILE,
+                        default=default_data_file,
+                    ): str,
                     vol.Required(
                         CONF_SCAN_INTERVAL_MINUTES,
                         default=default_interval,

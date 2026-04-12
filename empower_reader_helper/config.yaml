@@ -1,0 +1,34 @@
+name: "Empower Reader Helper"
+version: "0.1.0"
+slug: "empower_reader_helper"
+description: "Playwright-based helper that logs into Empower and writes parsed data for the Empower Reader integration."
+url: "https://github.com/NHastings2/empower-reader"
+startup: "application"
+boot: "auto"
+init: false
+arch:
+  - aarch64
+  - amd64
+  - armv7
+  - armhf
+  - i386
+map:
+  - config:rw
+options:
+  empower_username: ""
+  empower_password: ""
+  poll_interval_minutes: 30
+  output_path: "/config/empower_reader/latest.json"
+  login_url: "https://www.empowernaperville.com"
+  dashboard_url: "https://www.empowernaperville.com/Dashboard"
+  headless: true
+  try_headless_first: true
+schema:
+  empower_username: str
+  empower_password: str
+  poll_interval_minutes: int(5,1440)
+  output_path: str
+  login_url: str
+  dashboard_url: str
+  headless: bool
+  try_headless_first: bool

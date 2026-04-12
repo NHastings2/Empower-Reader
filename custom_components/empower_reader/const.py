@@ -4,13 +4,11 @@ from datetime import timedelta
 
 DOMAIN = "empower_reader"
 DEFAULT_NAME = "Empower Reader"
-DEFAULT_LOGIN_URL = "https://www.empowernaperville.com"
-DEFAULT_DASHBOARD_URL = "https://www.empowernaperville.com/Dashboard"
 DEFAULT_SCAN_INTERVAL_MINUTES = 30
 DEFAULT_SCAN_INTERVAL = timedelta(minutes=DEFAULT_SCAN_INTERVAL_MINUTES)
+DEFAULT_DATA_FILE = "empower_reader/latest.json"
 
-CONF_DASHBOARD_URL = "dashboard_url"
-CONF_LOGIN_URL = "login_url"
+CONF_DATA_FILE = "data_file"
 CONF_SCAN_INTERVAL_MINUTES = "scan_interval_minutes"
 
 STORAGE_VERSION = 1

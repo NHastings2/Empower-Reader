@@ -2,19 +2,15 @@
   "config": {
     "step": {
       "user": {
-        "title": "Connect to Empower",
-        "description": "Enter your Empower login details.",
+        "title": "Connect to Empower helper",
+        "description": "Enter the helper data file path. Start the Playwright helper add-on first so this file exists.",
         "data": {
-          "username": "Username",
-          "password": "Password",
-          "login_url": "Login URL",
-          "dashboard_url": "Dashboard URL"
+          "data_file": "Helper data file"
         }
       }
     },
     "error": {
-      "cannot_connect": "Failed to connect to Empower",
-      "invalid_auth": "Invalid username or password",
+      "cannot_connect": "Failed to read valid data from the helper",
       "unknown": "Unexpected error"
     },
     "abort": {
@@ -26,6 +22,7 @@
       "init": {
         "title": "Empower Reader options",
         "data": {
+          "data_file": "Helper data file",
           "scan_interval_minutes": "Polling interval in minutes"
         }
       }
