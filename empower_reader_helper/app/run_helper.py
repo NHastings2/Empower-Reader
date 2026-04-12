@@ -4,7 +4,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -86,13 +86,16 @@ def extract_payload(html: str) -> dict[str, Any]:
     errors: list[str] = []
 
     for index, script in enumerate(soup.find_all("script")):
-        text = script.string
+        text = script.string or script.get_text()
         if not text or "customerSDPPackage" not in text:
             continue
         try:
             return json.loads(extract_first_balanced_object(text))
         except Exception as exc:
             errors.append(f"{index}:{exc}")
+
+    if "Input.UserName" in html and "Forgot your" in html:
+        raise HelperError("Dashboard request returned the login page instead of usage data")
 
     raise HelperError(
         "Unable to locate customerSDPPackage in dashboard HTML. "
@@ -145,6 +148,8 @@ def login_and_fetch(page: Any, settings: Settings) -> str:
     html = page.content()
     if looks_like_bot_page(html):
         raise HelperError("BOT_PAGE_DASHBOARD")
+    if "Input.UserName" in html and "Forgot your" in html:
+        raise HelperError("Dashboard redirected back to login")
 
     return html
 
@@ -156,48 +161,65 @@ def fetch_payload(settings: Settings) -> dict[str, Any]:
 
     last_error: Exception | None = None
 
-    for headless in attempts:
-        try:
-            with sync_playwright() as playwright:
-                browser = playwright.chromium.launch(
-                    headless=headless,
-                    executable_path="/usr/bin/chromium",
+    def run_attempt(headless: bool, use_saved_state: bool) -> dict[str, Any]:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(
+                headless=headless,
+                executable_path="/usr/bin/chromium",
+            )
+            context_options: dict[str, Any] = {
+                "user_agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/123.0.0.0 Safari/537.36"
                 )
-                context_options: dict[str, Any] = {
-                    "user_agent": (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/123.0.0.0 Safari/537.36"
-                    )
-                }
-                if STATE_PATH.exists():
-                    context_options["storage_state"] = str(STATE_PATH)
+            }
+            if use_saved_state and STATE_PATH.exists():
+                context_options["storage_state"] = str(STATE_PATH)
 
-                context = browser.new_context(**context_options)
-                page = context.new_page()
-                html = login_and_fetch(page, settings)
-                payload = extract_payload(html)
-                context.storage_state(path=str(STATE_PATH))
-                browser.close()
-                return payload
-        except HelperError as exc:
-            last_error = exc
-            if str(exc).startswith("BOT_PAGE_") and headless:
-                continue
-            break
-        except PlaywrightTimeoutError as exc:
-            last_error = exc
-            break
-        except Exception as exc:
-            last_error = exc
-            break
+            context = browser.new_context(**context_options)
+            page = context.new_page()
+            html = login_and_fetch(page, settings)
+            payload = extract_payload(html)
+            context.storage_state(path=str(STATE_PATH))
+            browser.close()
+            return payload
+
+    for headless in attempts:
+        for use_saved_state in (True, False):
+            try:
+                return run_attempt(headless, use_saved_state)
+            except HelperError as exc:
+                last_error = exc
+                should_retry_fresh = use_saved_state and (
+                    "redirected back to login" in str(exc).lower()
+                    or "returned the login page" in str(exc).lower()
+                    or "unable to locate customersdppackage" in str(exc).lower()
+                )
+                if should_retry_fresh:
+                    LOGGER.warning(
+                        "Retrying helper fetch with a fresh browser state after: %s",
+                        exc,
+                    )
+                    continue
+                if str(exc).startswith("BOT_PAGE_") and headless:
+                    break
+                raise
+            except PlaywrightTimeoutError as exc:
+                last_error = exc
+                if use_saved_state:
+                    continue
+                raise
+            except Exception as exc:
+                last_error = exc
+                raise
 
     raise HelperError(f"Helper fetch failed: {last_error}")
 
 
 def write_output(output_path: Path, payload: dict[str, Any]) -> None:
     document = {
-        "fetched_at": datetime.utcnow().isoformat(),
+        "fetched_at": datetime.now(UTC).isoformat(),
         "payload": payload,
     }
     ensure_parent_dir(output_path)
