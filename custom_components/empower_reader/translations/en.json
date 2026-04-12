@@ -35,6 +35,11 @@
     }
   },
   "entity": {
+    "button": {
+      "refresh": {
+        "name": "Refresh"
+      }
+    },
     "sensor": {
       "electric_total_kwh": {
         "name": "Electric total"

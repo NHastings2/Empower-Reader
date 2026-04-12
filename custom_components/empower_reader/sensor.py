@@ -18,7 +18,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN
+from .const import DOMAIN, sensor_entity_id
 from .coordinator import EmpowerDataUpdateCoordinator
 
 
@@ -130,6 +130,7 @@ class EmpowerSensor(
         self._entry = entry
         self._attr_has_entity_name = True
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
+        self.entity_id = sensor_entity_id(description.key)
 
     @property
     def native_value(self) -> Any:

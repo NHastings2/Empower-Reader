@@ -9,7 +9,6 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -23,6 +22,7 @@ from .const import (
     DOMAIN,
     ENERGY_STATISTIC_UNIT,
     STORAGE_VERSION,
+    sensor_entity_id,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -73,12 +73,6 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
         self._cache: dict[str, Any] | None = None
         self.update_interval = timedelta(minutes=scan_interval_minutes)
         self._hass = hass
-
-    def _entity_statistic_id(self, key: str) -> str:
-        registry = er.async_get(self._hass)
-        unique_id = f"{self.config_entry.entry_id}_{key}"
-        entity_id = registry.async_get_entity_id("sensor", DOMAIN, unique_id)
-        return entity_id or f"sensor.{DOMAIN}_{key}"
 
     def _statistic_metadata(
         self,
@@ -152,7 +146,7 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
         if async_add_external_statistics is None:
             raise UpdateFailed("Recorder statistics import API is unavailable")
 
-        total_statistic_id = self._entity_statistic_id("electric_total_kwh")
+        total_statistic_id = sensor_entity_id("electric_total_kwh")
 
         total_metadata = self._statistic_metadata(
             statistic_id=total_statistic_id,
@@ -207,8 +201,20 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
 
         cache = await self._async_load_cache()
         electric = cache.get("electric", {})
+        total_statistic_id = sensor_entity_id("electric_total_kwh")
+        cached_statistic_id = str(electric.get("statistic_id", ""))
         last_ts = str(electric.get("last_ts", ""))
         total_kwh = float(electric.get("total_kwh", 0.0))
+
+        if cached_statistic_id and cached_statistic_id != total_statistic_id:
+            _LOGGER.info(
+                "Statistic ID changed from %s to %s; re-importing available Empower history",
+                cached_statistic_id,
+                total_statistic_id,
+            )
+            last_ts = ""
+            total_kwh = 0.0
+
         new_points: list[EmpowerPoint] = []
 
         for point in data.points:
@@ -230,6 +236,7 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
         cache["electric"] = {
             "last_ts": newest_ts,
             "total_kwh": imported_total,
+            "statistic_id": total_statistic_id,
         }
         await self._async_save_cache()
         imported_through = self._parse_cached_point_time(newest_ts) if newest_ts else None

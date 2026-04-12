@@ -7,7 +7,7 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from .const import DOMAIN, SERVICE_REFRESH
 from .coordinator import EmpowerDataUpdateCoordinator
 
-PLATFORMS: list[Platform] = [Platform.SENSOR]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BUTTON]
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:

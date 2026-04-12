@@ -14,3 +14,11 @@ CONF_DATA_FILE = "data_file"
 CONF_SCAN_INTERVAL_MINUTES = "scan_interval_minutes"
 
 STORAGE_VERSION = 1
+
+
+def sensor_entity_id(key: str) -> str:
+    return f"sensor.{DOMAIN}_{key}"
+
+
+def button_entity_id(key: str) -> str:
+    return f"button.{DOMAIN}_{key}"
