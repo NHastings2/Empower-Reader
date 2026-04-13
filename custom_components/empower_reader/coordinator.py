@@ -318,6 +318,19 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
             total_kwh = 0.0
             pending_points = []
 
+        if data.points:
+            earliest_available_ts = data.points[0].ts.isoformat()
+            if imported_through_ts and earliest_available_ts < imported_through_ts:
+                _LOGGER.info(
+                    "Earlier Empower history became available (%s before cached import cursor %s); re-importing available history",
+                    earliest_available_ts,
+                    imported_through_ts,
+                )
+                last_seen_ts = ""
+                imported_through_ts = ""
+                total_kwh = 0.0
+                pending_points = []
+
         new_points: list[EmpowerPoint] = []
 
         for point in data.points:
