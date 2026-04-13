@@ -53,11 +53,17 @@
       "electric_estimated_demand": {
         "name": "Electric estimated demand"
       },
+      "first_available_interval": {
+        "name": "First available interval"
+      },
       "helper_last_fetch": {
         "name": "Helper last fetch"
       },
       "helper_data_age_minutes": {
         "name": "Helper data age"
+      },
+      "available_interval_count": {
+        "name": "Available interval count"
       },
       "last_imported_interval": {
         "name": "Last imported interval"

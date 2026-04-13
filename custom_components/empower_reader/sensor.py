@@ -59,6 +59,13 @@ SENSORS: tuple[EmpowerSensorDescription, ...] = (
         value_fn=lambda snapshot: round(snapshot.data.last_interval_kwh * 4000, 1),
     ),
     EmpowerSensorDescription(
+        key="first_available_interval",
+        translation_key="first_available_interval",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda snapshot: snapshot.data.first_interval_time,
+    ),
+    EmpowerSensorDescription(
         key="helper_last_fetch",
         translation_key="helper_last_fetch",
         device_class=SensorDeviceClass.TIMESTAMP,
@@ -72,6 +79,13 @@ SENSORS: tuple[EmpowerSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda snapshot: _helper_age_minutes(snapshot.data.fetched_at),
+    ),
+    EmpowerSensorDescription(
+        key="available_interval_count",
+        translation_key="available_interval_count",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda snapshot: len(snapshot.data.points),
     ),
     EmpowerSensorDescription(
         key="last_imported_interval",
@@ -157,6 +171,8 @@ class EmpowerSensor(
             "customer_address": data.customer_address,
             "meter_number": data.meter_number,
             "service_point_id": data.sdp,
+            "first_available_interval": data.first_interval_time.isoformat(),
+            "available_interval_count": len(data.points),
             "helper_fetched_at": data.fetched_at.isoformat() if data.fetched_at else None,
             "imported_through": (
                 self.coordinator.data.imported_through.isoformat()

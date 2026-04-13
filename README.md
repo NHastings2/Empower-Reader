@@ -22,6 +22,7 @@ This repository contains two Home Assistant pieces that work together:
 - New 15-minute intervals are aggregated into hourly energy statistics for Home Assistant, because the recorder only accepts imported statistics at the top of the hour. Partial hours are held until enough 15-minute intervals arrive to build a complete hourly total.
 - `sensor.empower_reader_electric_estimated_demand` is a derived watts sensor based on the last 15-minute interval and is useful for dashboards, but it is not a true live real-time demand feed.
 - `sensor.empower_reader_helper_last_fetch` and `sensor.empower_reader_helper_data_age` help you see when the helper data is stale.
+- `sensor.empower_reader_first_available_interval` and `sensor.empower_reader_available_interval_count` show how much raw history was found in the helper payload.
 - `sensor.empower_reader_last_imported_interval` shows the most recent 15-minute interval timestamp that was successfully imported into Home Assistant.
 - `sensor.empower_reader_electric_last_interval_time` shows the most recent interval timestamp reported in the current Empower helper file.
 
