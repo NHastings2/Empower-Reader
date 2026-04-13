@@ -240,7 +240,11 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
 
         if total_rows:
             try:
-                await async_add_external_statistics(self._hass, total_metadata, total_rows)
+                result = async_add_external_statistics(
+                    self._hass, total_metadata, total_rows
+                )
+                if inspect.isawaitable(result):
+                    await result
             except Exception:
                 preview = [
                     {
