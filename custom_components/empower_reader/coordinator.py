@@ -4,7 +4,7 @@ import inspect
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -181,7 +181,7 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
             minute=0,
             second=0,
             microsecond=0,
-            tzinfo=dt_util.UTC,
+            tzinfo=timezone.utc,
         )
 
     def _parse_cached_point_time(self, raw: str) -> Any | None:
@@ -239,12 +239,24 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
             )
 
         if total_rows:
-            _LOGGER.debug(
-                "Importing %s hourly statistics rows starting at %s",
-                len(total_rows),
-                [row.get("start") if isinstance(row, dict) else getattr(row, "start", None) for row in total_rows[:3]],
-            )
-            await async_add_external_statistics(self._hass, total_metadata, total_rows)
+            try:
+                await async_add_external_statistics(self._hass, total_metadata, total_rows)
+            except Exception:
+                preview = [
+                    {
+                        "start": row.get("start") if isinstance(row, dict) else getattr(row, "start", None),
+                        "tzinfo": str(
+                            (row.get("start") if isinstance(row, dict) else getattr(row, "start", None)).tzinfo
+                        ) if (row.get("start") if isinstance(row, dict) else getattr(row, "start", None)) is not None else None,
+                    }
+                    for row in total_rows[:3]
+                ]
+                _LOGGER.error(
+                    "Failed importing %s hourly statistics rows; first rows=%s",
+                    len(total_rows),
+                    preview,
+                )
+                raise
         return running_total
 
     async def _async_load_cache(self) -> dict[str, Any]:
