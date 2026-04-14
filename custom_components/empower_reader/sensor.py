@@ -18,7 +18,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, sensor_entity_id
+from .const import DOMAIN, external_statistic_id, sensor_entity_id
 from .coordinator import EmpowerDataUpdateCoordinator
 
 
@@ -192,6 +192,9 @@ class EmpowerSensor(
             "customer_address": data.customer_address,
             "meter_number": data.meter_number,
             "service_point_id": data.sdp,
+            "energy_statistic_id": external_statistic_id(
+                self._entry.entry_id, "electric_total_kwh"
+            ),
             "first_available_interval": data.first_interval_time.isoformat(),
             "available_interval_count": len(data.points),
             "helper_fetched_at": data.fetched_at.isoformat() if data.fetched_at else None,

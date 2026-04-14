@@ -24,6 +24,7 @@ This repository contains two Home Assistant pieces that work together:
 - `sensor.empower_reader_helper_last_fetch` and `sensor.empower_reader_helper_data_age` help you see when the helper data is stale.
 - `sensor.empower_reader_first_available_interval` and `sensor.empower_reader_available_interval_count` show how much raw history was found in the helper payload.
 - `sensor.empower_reader_imported_hour_count`, `sensor.empower_reader_first_imported_hour`, and `sensor.empower_reader_last_imported_hour` show what hourly history was actually imported into Home Assistant statistics.
+- The imported Energy statistic is stored under the `energy_statistic_id` attribute on the Empower sensors. Use that statistic in the Energy dashboard rather than the normal entity history if you want the imported backfill.
 - `sensor.empower_reader_last_imported_interval` shows the most recent 15-minute interval timestamp that was successfully imported into Home Assistant.
 - `sensor.empower_reader_electric_last_interval_time` shows the most recent interval timestamp reported in the current Empower helper file.
 
