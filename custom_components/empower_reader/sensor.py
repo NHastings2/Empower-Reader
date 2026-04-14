@@ -88,6 +88,27 @@ SENSORS: tuple[EmpowerSensorDescription, ...] = (
         value_fn=lambda snapshot: len(snapshot.data.points),
     ),
     EmpowerSensorDescription(
+        key="imported_hour_count",
+        translation_key="imported_hour_count",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda snapshot: snapshot.imported_hour_count,
+    ),
+    EmpowerSensorDescription(
+        key="first_imported_hour",
+        translation_key="first_imported_hour",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda snapshot: snapshot.first_imported_hour,
+    ),
+    EmpowerSensorDescription(
+        key="last_imported_hour",
+        translation_key="last_imported_hour",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda snapshot: snapshot.last_imported_hour,
+    ),
+    EmpowerSensorDescription(
         key="last_imported_interval",
         translation_key="last_imported_interval",
         device_class=SensorDeviceClass.TIMESTAMP,
@@ -174,6 +195,17 @@ class EmpowerSensor(
             "first_available_interval": data.first_interval_time.isoformat(),
             "available_interval_count": len(data.points),
             "helper_fetched_at": data.fetched_at.isoformat() if data.fetched_at else None,
+            "imported_hour_count": self.coordinator.data.imported_hour_count,
+            "first_imported_hour": (
+                self.coordinator.data.first_imported_hour.isoformat()
+                if self.coordinator.data.first_imported_hour
+                else None
+            ),
+            "last_imported_hour": (
+                self.coordinator.data.last_imported_hour.isoformat()
+                if self.coordinator.data.last_imported_hour
+                else None
+            ),
             "imported_through": (
                 self.coordinator.data.imported_through.isoformat()
                 if self.coordinator.data.imported_through

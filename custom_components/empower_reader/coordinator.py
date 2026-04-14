@@ -50,6 +50,9 @@ class EmpowerSnapshot:
     data: EmpowerData
     total_kwh: float
     imported_through: Any | None
+    imported_hour_count: int
+    first_imported_hour: Any | None
+    last_imported_hour: Any | None
 
 
 class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
@@ -198,9 +201,9 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
         *,
         new_points: list[EmpowerPoint],
         total_before: float,
-    ) -> float:
+    ) -> tuple[float, int, Any | None, Any | None]:
         if not new_points:
-            return total_before
+            return total_before, 0, None, None
         if async_add_external_statistics is None:
             raise UpdateFailed("Recorder statistics import API is unavailable")
 
@@ -261,7 +264,24 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
                     preview,
                 )
                 raise
-        return running_total
+            first_row_start = (
+                total_rows[0].get("start")
+                if isinstance(total_rows[0], dict)
+                else getattr(total_rows[0], "start", None)
+            )
+            last_row_start = (
+                total_rows[-1].get("start")
+                if isinstance(total_rows[-1], dict)
+                else getattr(total_rows[-1], "start", None)
+            )
+            _LOGGER.info(
+                "Imported %s hourly energy rows from %s to %s",
+                len(total_rows),
+                first_row_start,
+                last_row_start,
+            )
+            return running_total, len(total_rows), first_row_start, last_row_start
+        return running_total, 0, None, None
 
     async def _async_load_cache(self) -> dict[str, Any]:
         if self._cache is None:
@@ -298,6 +318,17 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
             electric.get("imported_through_ts", electric.get("last_ts", ""))
         )
         total_kwh = float(electric.get("total_kwh", 0.0))
+        imported_hour_count = int(electric.get("imported_hour_count", 0))
+        first_imported_hour = (
+            self._parse_cached_point_time(str(electric.get("first_imported_hour", "")))
+            if electric.get("first_imported_hour")
+            else None
+        )
+        last_imported_hour = (
+            self._parse_cached_point_time(str(electric.get("last_imported_hour", "")))
+            if electric.get("last_imported_hour")
+            else None
+        )
         pending_points = [
             EmpowerPoint(
                 ts=dt_util.parse_datetime(item["ts"]) or dt_util.utcnow(),
@@ -317,6 +348,9 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
             imported_through_ts = ""
             total_kwh = 0.0
             pending_points = []
+            imported_hour_count = 0
+            first_imported_hour = None
+            last_imported_hour = None
 
         if data.points:
             earliest_available_ts = data.points[0].ts.isoformat()
@@ -330,6 +364,9 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
                 imported_through_ts = ""
                 total_kwh = 0.0
                 pending_points = []
+                imported_hour_count = 0
+                first_imported_hour = None
+                last_imported_hour = None
 
         new_points: list[EmpowerPoint] = []
 
@@ -359,10 +396,18 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
             else:
                 retained_pending_points.extend(points)
 
-        imported_total = await self._async_import_interval_statistics(
+        imported_total, added_hour_count, added_first_hour, added_last_hour = await self._async_import_interval_statistics(
             new_points=importable_points,
             total_before=total_kwh,
         )
+        if added_hour_count:
+            imported_hour_count += added_hour_count
+            if first_imported_hour is None or (
+                added_first_hour is not None and added_first_hour < first_imported_hour
+            ):
+                first_imported_hour = added_first_hour
+            if added_last_hour is not None:
+                last_imported_hour = added_last_hour
         newest_seen_ts = last_seen_ts
         if new_points:
             newest_seen_ts = new_points[-1].ts.isoformat()
@@ -375,6 +420,13 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
             "total_kwh": imported_total,
             "statistic_id": total_statistic_id,
             "imported_through_ts": last_imported_raw_ts,
+            "imported_hour_count": imported_hour_count,
+            "first_imported_hour": (
+                first_imported_hour.isoformat() if first_imported_hour else None
+            ),
+            "last_imported_hour": (
+                last_imported_hour.isoformat() if last_imported_hour else None
+            ),
             "pending_points": [
                 {"ts": point.ts.isoformat(), "kwh": point.kwh}
                 for point in retained_pending_points
@@ -390,4 +442,7 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
             data=data,
             total_kwh=imported_total,
             imported_through=imported_through,
+            imported_hour_count=imported_hour_count,
+            first_imported_hour=first_imported_hour,
+            last_imported_hour=last_imported_hour,
         )

@@ -65,6 +65,15 @@
       "available_interval_count": {
         "name": "Available interval count"
       },
+      "imported_hour_count": {
+        "name": "Imported hour count"
+      },
+      "first_imported_hour": {
+        "name": "First imported hour"
+      },
+      "last_imported_hour": {
+        "name": "Last imported hour"
+      },
       "last_imported_interval": {
         "name": "Last imported interval"
       }
