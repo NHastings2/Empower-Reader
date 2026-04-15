@@ -122,6 +122,9 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
 
         cache = await self._async_load_cache()
         electric = cache.get("electric", {})
+        if "tracked_local_date" not in electric:
+            electric = {}
+            cache["electric"] = electric
         last_seen_ts = str(electric.get("last_seen_ts", ""))
         total_kwh = float(electric.get("total_kwh", 0.0))
         tracked_local_date = str(electric.get("tracked_local_date", ""))
