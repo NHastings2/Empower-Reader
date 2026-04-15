@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import inspect
 import logging
-from collections import defaultdict
 from dataclasses import dataclass
-from datetime import timedelta, timezone
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -21,28 +19,10 @@ from .const import (
     DEFAULT_DATA_FILE,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
-    ENERGY_STATISTIC_UNIT,
     STORAGE_VERSION,
-    external_statistic_id,
-    sensor_entity_id,
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-try:
-    from homeassistant.components.recorder.models import (
-        StatisticData,
-        StatisticMetaData,
-        StatisticMeanType,
-    )
-    from homeassistant.components.recorder.statistics import (
-        async_add_external_statistics,
-    )
-except ImportError:  # pragma: no cover - Home Assistant runtime import guard
-    StatisticData = None
-    StatisticMetaData = None
-    StatisticMeanType = None
-    async_add_external_statistics = None
 
 
 @dataclass(frozen=True)
@@ -50,9 +30,6 @@ class EmpowerSnapshot:
     data: EmpowerData
     total_kwh: float
     imported_through: Any | None
-    imported_hour_count: int
-    first_imported_hour: Any | None
-    last_imported_hour: Any | None
 
 
 class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
@@ -65,7 +42,10 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
     ) -> None:
         scan_interval_minutes = entry.options.get(
             CONF_SCAN_INTERVAL_MINUTES,
-            entry.data.get(CONF_SCAN_INTERVAL_MINUTES, int(DEFAULT_SCAN_INTERVAL.total_seconds() // 60)),
+            entry.data.get(
+                CONF_SCAN_INTERVAL_MINUTES,
+                int(DEFAULT_SCAN_INTERVAL.total_seconds() // 60),
+            ),
         )
         super().__init__(
             hass,
@@ -74,101 +54,12 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
             update_interval=DEFAULT_SCAN_INTERVAL,
         )
         self.config_entry = entry
-        self._store = Store[dict[str, Any]](hass, STORAGE_VERSION, f"{DOMAIN}_{entry.entry_id}")
+        self._store = Store[dict[str, Any]](
+            hass, STORAGE_VERSION, f"{DOMAIN}_{entry.entry_id}"
+        )
         self._cache: dict[str, Any] | None = None
         self.update_interval = timedelta(minutes=scan_interval_minutes)
         self._hass = hass
-
-    def _statistic_metadata(
-        self,
-        *,
-        statistic_id: str,
-        name: str,
-        unit_of_measurement: str,
-        has_sum: bool,
-        has_mean: bool,
-        unit_class: str | None,
-    ) -> Any:
-        if StatisticMetaData is None:
-            raise UpdateFailed("Recorder statistics API is unavailable")
-
-        kwargs: dict[str, Any] = {
-            "statistic_id": statistic_id,
-            "source": "external",
-            "name": name,
-            "unit_of_measurement": unit_of_measurement,
-        }
-        optional_kwargs: dict[str, Any] = {
-            "has_sum": has_sum,
-            "has_mean": has_mean,
-            "unit_class": unit_class,
-        }
-        if StatisticMeanType is not None:
-            optional_kwargs["mean_type"] = (
-                StatisticMeanType.ARITHMETIC
-                if has_mean
-                else StatisticMeanType.NONE
-            )
-
-        if StatisticMetaData is dict:
-            return {
-                **kwargs,
-                **{key: value for key, value in optional_kwargs.items() if value is not None},
-            }
-
-        try:
-            params = inspect.signature(StatisticMetaData).parameters
-        except (TypeError, ValueError):
-            params = {}
-
-        if params:
-            for key, value in optional_kwargs.items():
-                if key in params and value is not None:
-                    kwargs[key] = value
-            return StatisticMetaData(**kwargs)
-
-        for key, value in optional_kwargs.items():
-            if value is not None:
-                kwargs[key] = value
-
-        try:
-            return StatisticMetaData(**kwargs)
-        except TypeError:
-            minimal_kwargs = {
-                "statistic_id": statistic_id,
-                "source": "external",
-                "name": name,
-                "unit_of_measurement": unit_of_measurement,
-            }
-            return StatisticMetaData(**minimal_kwargs)
-
-    def _statistic_data(self, **raw: Any) -> Any:
-        if StatisticData is None:
-            raise UpdateFailed("Recorder statistics API is unavailable")
-
-        if StatisticData is dict:
-            return raw
-
-        try:
-            params = inspect.signature(StatisticData).parameters
-        except (TypeError, ValueError):
-            params = {}
-
-        if params:
-            kwargs = {key: value for key, value in raw.items() if key in params}
-            return StatisticData(**kwargs)
-
-        try:
-            return StatisticData(**raw)
-        except TypeError:
-            minimal_kwargs = {
-                key: value
-                for key, value in raw.items()
-                if key in {"start", "state", "sum", "mean", "min", "max", "last_reset"}
-            }
-            if "start" not in minimal_kwargs:
-                raise UpdateFailed("Recorder statistics data requires a start timestamp")
-            return StatisticData(**minimal_kwargs)
 
     def _point_start(self, point: EmpowerPoint) -> Any:
         if point.ts.tzinfo is None:
@@ -177,15 +68,6 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
         else:
             aware = point.ts
         return dt_util.as_utc(aware)
-
-    def _point_hour_start(self, point: EmpowerPoint) -> Any:
-        point_start = self._point_start(point)
-        return point_start.replace(
-            minute=0,
-            second=0,
-            microsecond=0,
-            tzinfo=timezone.utc,
-        )
 
     def _parse_cached_point_time(self, raw: str) -> Any | None:
         parsed = dt_util.parse_datetime(raw)
@@ -196,92 +78,23 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
             parsed = parsed.replace(tzinfo=local_tz)
         return dt_util.as_utc(parsed)
 
-    async def _async_import_interval_statistics(
-        self,
-        *,
-        new_points: list[EmpowerPoint],
-        total_before: float,
-    ) -> tuple[float, int, Any | None, Any | None]:
-        if not new_points:
-            return total_before, 0, None, None
-        if async_add_external_statistics is None:
-            raise UpdateFailed("Recorder statistics import API is unavailable")
+    def _point_local_date(self, point: EmpowerPoint) -> Any:
+        return dt_util.as_local(self._point_start(point)).date()
 
-        total_statistic_id = external_statistic_id(
-            self.config_entry.entry_id, "electric_total_kwh"
+    def _current_local_date(self) -> Any:
+        return dt_util.now().date()
+
+    def _initial_total_for_today(self, data: EmpowerData) -> tuple[float, str]:
+        today = self._current_local_date()
+        todays_points = [
+            point for point in data.points if self._point_local_date(point) == today
+        ]
+        if not todays_points:
+            return 0.0, data.points[-1].ts.isoformat() if data.points else ""
+        return (
+            round(sum(point.kwh for point in todays_points), 3),
+            todays_points[-1].ts.isoformat(),
         )
-
-        total_metadata = self._statistic_metadata(
-            statistic_id=total_statistic_id,
-            name="Empower Electric Total",
-            unit_of_measurement=ENERGY_STATISTIC_UNIT,
-            has_sum=True,
-            has_mean=False,
-            unit_class="energy",
-        )
-
-        running_total = total_before
-        total_rows: list[Any] = []
-        bucketed_points: dict[Any, list[EmpowerPoint]] = defaultdict(list)
-
-        for point in new_points:
-            bucketed_points[self._point_hour_start(point)].append(point)
-
-        for start in sorted(bucketed_points):
-            points = sorted(bucketed_points[start], key=lambda item: item.ts)
-            if len(points) < 4:
-                continue
-            running_total += round(sum(point.kwh for point in points), 3)
-
-            total_rows.append(
-                self._statistic_data(
-                    start=start,
-                    state=round(running_total, 3),
-                    sum=round(running_total, 3),
-                )
-            )
-
-        if total_rows:
-            try:
-                result = async_add_external_statistics(
-                    self._hass, total_metadata, total_rows
-                )
-                if inspect.isawaitable(result):
-                    await result
-            except Exception:
-                preview = [
-                    {
-                        "start": row.get("start") if isinstance(row, dict) else getattr(row, "start", None),
-                        "tzinfo": str(
-                            (row.get("start") if isinstance(row, dict) else getattr(row, "start", None)).tzinfo
-                        ) if (row.get("start") if isinstance(row, dict) else getattr(row, "start", None)) is not None else None,
-                    }
-                    for row in total_rows[:3]
-                ]
-                _LOGGER.error(
-                    "Failed importing %s hourly statistics rows; first rows=%s",
-                    len(total_rows),
-                    preview,
-                )
-                raise
-            first_row_start = (
-                total_rows[0].get("start")
-                if isinstance(total_rows[0], dict)
-                else getattr(total_rows[0], "start", None)
-            )
-            last_row_start = (
-                total_rows[-1].get("start")
-                if isinstance(total_rows[-1], dict)
-                else getattr(total_rows[-1], "start", None)
-            )
-            _LOGGER.info(
-                "Imported %s hourly energy rows from %s to %s",
-                len(total_rows),
-                first_row_start,
-                last_row_start,
-            )
-            return running_total, len(total_rows), first_row_start, last_row_start
-        return running_total, 0, None, None
 
     async def _async_load_cache(self) -> dict[str, Any]:
         if self._cache is None:
@@ -309,140 +122,67 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
 
         cache = await self._async_load_cache()
         electric = cache.get("electric", {})
-        total_statistic_id = external_statistic_id(
-            self.config_entry.entry_id, "electric_total_kwh"
-        )
-        cached_statistic_id = str(electric.get("statistic_id", ""))
-        last_seen_ts = str(electric.get("last_seen_ts", electric.get("last_ts", "")))
-        imported_through_ts = str(
-            electric.get("imported_through_ts", electric.get("last_ts", ""))
-        )
+        last_seen_ts = str(electric.get("last_seen_ts", ""))
         total_kwh = float(electric.get("total_kwh", 0.0))
-        imported_hour_count = int(electric.get("imported_hour_count", 0))
-        first_imported_hour = (
-            self._parse_cached_point_time(str(electric.get("first_imported_hour", "")))
-            if electric.get("first_imported_hour")
-            else None
-        )
-        last_imported_hour = (
-            self._parse_cached_point_time(str(electric.get("last_imported_hour", "")))
-            if electric.get("last_imported_hour")
-            else None
-        )
-        pending_points = [
-            EmpowerPoint(
-                ts=dt_util.parse_datetime(item["ts"]) or dt_util.utcnow(),
-                kwh=float(item["kwh"]),
-            )
-            for item in electric.get("pending_points", [])
-            if isinstance(item, dict) and "ts" in item and "kwh" in item
-        ]
+        tracked_local_date = str(electric.get("tracked_local_date", ""))
+        today_local_date = self._current_local_date().isoformat()
 
-        if cached_statistic_id and cached_statistic_id != total_statistic_id:
+        if not electric or tracked_local_date != today_local_date:
+            total_kwh, last_seen_ts = self._initial_total_for_today(data)
+            cache["electric"] = {
+                "last_seen_ts": last_seen_ts,
+                "last_ts": last_seen_ts,
+                "total_kwh": total_kwh,
+                "tracked_local_date": today_local_date,
+            }
+            await self._async_save_cache()
+            imported_through = (
+                self._parse_cached_point_time(last_seen_ts) if last_seen_ts else None
+            )
             _LOGGER.info(
-                "Statistic ID changed from %s to %s; re-importing available Empower history",
-                cached_statistic_id,
-                total_statistic_id,
+                "Started native Empower energy accumulation for %s at %.3f kWh",
+                today_local_date,
+                total_kwh,
             )
-            last_seen_ts = ""
-            imported_through_ts = ""
-            total_kwh = 0.0
-            pending_points = []
-            imported_hour_count = 0
-            first_imported_hour = None
-            last_imported_hour = None
-
-        if data.points:
-            earliest_available_ts = data.points[0].ts.isoformat()
-            if imported_through_ts and earliest_available_ts < imported_through_ts:
-                _LOGGER.info(
-                    "Earlier Empower history became available (%s before cached import cursor %s); re-importing available history",
-                    earliest_available_ts,
-                    imported_through_ts,
-                )
-                last_seen_ts = ""
-                imported_through_ts = ""
-                total_kwh = 0.0
-                pending_points = []
-                imported_hour_count = 0
-                first_imported_hour = None
-                last_imported_hour = None
+            return EmpowerSnapshot(
+                data=data,
+                total_kwh=total_kwh,
+                imported_through=imported_through,
+            )
 
         new_points: list[EmpowerPoint] = []
-
         for point in data.points:
             point_iso = point.ts.isoformat()
             if last_seen_ts and point_iso <= last_seen_ts:
                 continue
+            if self._point_local_date(point) != self._current_local_date():
+                continue
             new_points.append(point)
 
-        candidate_points = sorted(
-            pending_points + new_points,
-            key=lambda item: item.ts,
-        )
-        bucketed_points: dict[Any, list[EmpowerPoint]] = defaultdict(list)
-        for point in candidate_points:
-            bucketed_points[self._point_hour_start(point)].append(point)
-
-        importable_points: list[EmpowerPoint] = []
-        retained_pending_points: list[EmpowerPoint] = []
-        last_imported_raw_ts = imported_through_ts
-
-        for hour_start in sorted(bucketed_points):
-            points = sorted(bucketed_points[hour_start], key=lambda item: item.ts)
-            if len(points) >= 4:
-                importable_points.extend(points)
-                last_imported_raw_ts = points[-1].ts.isoformat()
-            else:
-                retained_pending_points.extend(points)
-
-        imported_total, added_hour_count, added_first_hour, added_last_hour = await self._async_import_interval_statistics(
-            new_points=importable_points,
-            total_before=total_kwh,
-        )
-        if added_hour_count:
-            imported_hour_count += added_hour_count
-            if first_imported_hour is None or (
-                added_first_hour is not None and added_first_hour < first_imported_hour
-            ):
-                first_imported_hour = added_first_hour
-            if added_last_hour is not None:
-                last_imported_hour = added_last_hour
-        newest_seen_ts = last_seen_ts
         if new_points:
-            newest_seen_ts = new_points[-1].ts.isoformat()
-        elif data.points:
-            newest_seen_ts = data.points[-1].ts.isoformat()
+            total_kwh = round(total_kwh + sum(point.kwh for point in new_points), 3)
+            last_seen_ts = new_points[-1].ts.isoformat()
+            _LOGGER.info(
+                "Added %s Empower intervals for %s; total is now %.3f kWh",
+                len(new_points),
+                today_local_date,
+                total_kwh,
+            )
+        elif data.points and not last_seen_ts:
+            last_seen_ts = data.points[-1].ts.isoformat()
 
         cache["electric"] = {
-            "last_seen_ts": newest_seen_ts,
-            "last_ts": last_imported_raw_ts,
-            "total_kwh": imported_total,
-            "statistic_id": total_statistic_id,
-            "imported_through_ts": last_imported_raw_ts,
-            "imported_hour_count": imported_hour_count,
-            "first_imported_hour": (
-                first_imported_hour.isoformat() if first_imported_hour else None
-            ),
-            "last_imported_hour": (
-                last_imported_hour.isoformat() if last_imported_hour else None
-            ),
-            "pending_points": [
-                {"ts": point.ts.isoformat(), "kwh": point.kwh}
-                for point in retained_pending_points
-            ],
+            "last_seen_ts": last_seen_ts,
+            "last_ts": last_seen_ts,
+            "total_kwh": total_kwh,
+            "tracked_local_date": today_local_date,
         }
         await self._async_save_cache()
         imported_through = (
-            self._parse_cached_point_time(last_imported_raw_ts)
-            if last_imported_raw_ts
-            else None
+            self._parse_cached_point_time(last_seen_ts) if last_seen_ts else None
         )
         return EmpowerSnapshot(
             data=data,
-            total_kwh=imported_total,
+            total_kwh=total_kwh,
             imported_through=imported_through,
-            imported_hour_count=imported_hour_count,
-            first_imported_hour=first_imported_hour,
-            last_imported_hour=last_imported_hour,
         )

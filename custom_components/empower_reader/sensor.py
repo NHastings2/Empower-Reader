@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -11,14 +11,14 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.const import UnitOfEnergy, UnitOfPower
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, external_statistic_id, sensor_entity_id
+from .const import DOMAIN, sensor_entity_id
 from .coordinator import EmpowerDataUpdateCoordinator
 
 
@@ -88,27 +88,6 @@ SENSORS: tuple[EmpowerSensorDescription, ...] = (
         value_fn=lambda snapshot: len(snapshot.data.points),
     ),
     EmpowerSensorDescription(
-        key="imported_hour_count",
-        translation_key="imported_hour_count",
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda snapshot: snapshot.imported_hour_count,
-    ),
-    EmpowerSensorDescription(
-        key="first_imported_hour",
-        translation_key="first_imported_hour",
-        device_class=SensorDeviceClass.TIMESTAMP,
-        entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda snapshot: snapshot.first_imported_hour,
-    ),
-    EmpowerSensorDescription(
-        key="last_imported_hour",
-        translation_key="last_imported_hour",
-        device_class=SensorDeviceClass.TIMESTAMP,
-        entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda snapshot: snapshot.last_imported_hour,
-    ),
-    EmpowerSensorDescription(
         key="last_imported_interval",
         translation_key="last_imported_interval",
         device_class=SensorDeviceClass.TIMESTAMP,
@@ -143,15 +122,15 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    coordinator: EmpowerDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    coordinator: EmpowerDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
+        "coordinator"
+    ]
     async_add_entities(
         EmpowerSensor(coordinator, entry, description) for description in SENSORS
     )
 
 
-class EmpowerSensor(
-    CoordinatorEntity[EmpowerDataUpdateCoordinator], SensorEntity
-):
+class EmpowerSensor(CoordinatorEntity[EmpowerDataUpdateCoordinator], SensorEntity):
     entity_description: EmpowerSensorDescription
 
     def __init__(
@@ -192,23 +171,9 @@ class EmpowerSensor(
             "customer_address": data.customer_address,
             "meter_number": data.meter_number,
             "service_point_id": data.sdp,
-            "energy_statistic_id": external_statistic_id(
-                self._entry.entry_id, "electric_total_kwh"
-            ),
             "first_available_interval": data.first_interval_time.isoformat(),
             "available_interval_count": len(data.points),
             "helper_fetched_at": data.fetched_at.isoformat() if data.fetched_at else None,
-            "imported_hour_count": self.coordinator.data.imported_hour_count,
-            "first_imported_hour": (
-                self.coordinator.data.first_imported_hour.isoformat()
-                if self.coordinator.data.first_imported_hour
-                else None
-            ),
-            "last_imported_hour": (
-                self.coordinator.data.last_imported_hour.isoformat()
-                if self.coordinator.data.last_imported_hour
-                else None
-            ),
             "imported_through": (
                 self.coordinator.data.imported_through.isoformat()
                 if self.coordinator.data.imported_through
