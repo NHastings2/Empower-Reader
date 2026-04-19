@@ -95,10 +95,29 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
             3,
         )
 
+    def _latest_available_day_total(self, data: EmpowerData) -> float:
+        if not data.points:
+            return 0.0
+        latest_day = self._local_date_for_point(data.points[-1])
+        return round(
+            sum(
+                point.kwh
+                for point in data.points
+                if self._local_date_for_point(point) == latest_day
+            ),
+            3,
+        )
+
+    def _visible_seed_total(self, data: EmpowerData) -> float:
+        current_day_total = self._current_day_total(data)
+        if current_day_total > 0.0:
+            return current_day_total
+        return self._latest_available_day_total(data)
+
     def _initial_state_from_visible_data(self, data: EmpowerData) -> tuple[float, str]:
         if not data.points:
             return 0.0, ""
-        return self._current_day_total(data), data.points[-1].ts.isoformat()
+        return self._visible_seed_total(data), data.points[-1].ts.isoformat()
 
     async def _async_load_cache(self) -> dict[str, Any]:
         if self._cache is None:
@@ -129,7 +148,7 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
         last_seen_ts = str(electric.get("last_seen_ts", ""))
         total_kwh = float(electric.get("total_kwh", 0.0))
         latest_visible_ts = data.points[-1].ts.isoformat() if data.points else ""
-        current_day_total = self._current_day_total(data)
+        visible_seed_total = self._visible_seed_total(data)
 
         if "tracked_local_date" in electric:
             total_kwh, last_seen_ts = self._initial_state_from_visible_data(data)
@@ -177,11 +196,11 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
 
         if (
             total_kwh == 0.0
-            and current_day_total > 0.0
+            and visible_seed_total > 0.0
             and latest_visible_ts
-            and last_seen_ts == latest_visible_ts
         ):
-            total_kwh = current_day_total
+            total_kwh = visible_seed_total
+            last_seen_ts = latest_visible_ts
             cache["electric"] = {
                 "last_seen_ts": last_seen_ts,
                 "last_ts": last_seen_ts,
@@ -189,7 +208,7 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
             }
             await self._async_save_cache()
             _LOGGER.info(
-                "Re-seeded Empower energy total from visible current-day data at %.3f kWh",
+                "Re-seeded Empower energy total from visible helper data at %.3f kWh",
                 total_kwh,
             )
 
