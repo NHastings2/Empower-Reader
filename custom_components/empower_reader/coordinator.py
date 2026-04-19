@@ -78,23 +78,27 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
             parsed = parsed.replace(tzinfo=local_tz)
         return dt_util.as_utc(parsed)
 
-    def _point_local_date(self, point: EmpowerPoint) -> Any:
-        return dt_util.as_local(self._point_start(point)).date()
-
     def _current_local_date(self) -> Any:
-        return dt_util.now().date()
+        return dt_util.now().astimezone(
+            dt_util.get_time_zone(self._hass.config.time_zone)
+        ).date()
 
-    def _initial_total_for_today(self, data: EmpowerData) -> tuple[float, str]:
+    def _local_date_for_point(self, point: EmpowerPoint) -> Any:
+        return self._point_start(point).astimezone(
+            dt_util.get_time_zone(self._hass.config.time_zone)
+        ).date()
+
+    def _current_day_total(self, data: EmpowerData) -> float:
         today = self._current_local_date()
-        todays_points = [
-            point for point in data.points if self._point_local_date(point) == today
-        ]
-        if not todays_points:
-            return 0.0, data.points[-1].ts.isoformat() if data.points else ""
-        return (
-            round(sum(point.kwh for point in todays_points), 3),
-            todays_points[-1].ts.isoformat(),
+        return round(
+            sum(point.kwh for point in data.points if self._local_date_for_point(point) == today),
+            3,
         )
+
+    def _initial_state_from_visible_data(self, data: EmpowerData) -> tuple[float, str]:
+        if not data.points:
+            return 0.0, ""
+        return self._current_day_total(data), data.points[-1].ts.isoformat()
 
     async def _async_load_cache(self) -> dict[str, Any]:
         if self._cache is None:
@@ -122,30 +126,26 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
 
         cache = await self._async_load_cache()
         electric = cache.get("electric", {})
-        if "tracked_local_date" not in electric:
-            electric = {}
-            cache["electric"] = electric
         last_seen_ts = str(electric.get("last_seen_ts", ""))
         total_kwh = float(electric.get("total_kwh", 0.0))
-        tracked_local_date = str(electric.get("tracked_local_date", ""))
-        today_local_date = self._current_local_date().isoformat()
+        latest_visible_ts = data.points[-1].ts.isoformat() if data.points else ""
+        current_day_total = self._current_day_total(data)
 
-        if not electric or tracked_local_date != today_local_date:
-            total_kwh, last_seen_ts = self._initial_total_for_today(data)
+        if "tracked_local_date" in electric:
+            total_kwh, last_seen_ts = self._initial_state_from_visible_data(data)
             cache["electric"] = {
                 "last_seen_ts": last_seen_ts,
                 "last_ts": last_seen_ts,
                 "total_kwh": total_kwh,
-                "tracked_local_date": today_local_date,
             }
             await self._async_save_cache()
             imported_through = (
                 self._parse_cached_point_time(last_seen_ts) if last_seen_ts else None
             )
             _LOGGER.info(
-                "Started native Empower energy accumulation for %s at %.3f kWh",
-                today_local_date,
+                "Migrated legacy Empower energy cache to monotonic mode at %.3f kWh through %s",
                 total_kwh,
+                last_seen_ts,
             )
             return EmpowerSnapshot(
                 data=data,
@@ -153,12 +153,50 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
                 imported_through=imported_through,
             )
 
+        if not electric:
+            total_kwh, last_seen_ts = self._initial_state_from_visible_data(data)
+            cache["electric"] = {
+                "last_seen_ts": last_seen_ts,
+                "last_ts": last_seen_ts,
+                "total_kwh": total_kwh,
+            }
+            await self._async_save_cache()
+            imported_through = (
+                self._parse_cached_point_time(last_seen_ts) if last_seen_ts else None
+            )
+            _LOGGER.info(
+                "Started native Empower energy accumulation at %.3f kWh from interval %s",
+                total_kwh,
+                last_seen_ts,
+            )
+            return EmpowerSnapshot(
+                data=data,
+                total_kwh=total_kwh,
+                imported_through=imported_through,
+            )
+
+        if (
+            total_kwh == 0.0
+            and current_day_total > 0.0
+            and latest_visible_ts
+            and last_seen_ts == latest_visible_ts
+        ):
+            total_kwh = current_day_total
+            cache["electric"] = {
+                "last_seen_ts": last_seen_ts,
+                "last_ts": last_seen_ts,
+                "total_kwh": total_kwh,
+            }
+            await self._async_save_cache()
+            _LOGGER.info(
+                "Re-seeded Empower energy total from visible current-day data at %.3f kWh",
+                total_kwh,
+            )
+
         new_points: list[EmpowerPoint] = []
         for point in data.points:
             point_iso = point.ts.isoformat()
             if last_seen_ts and point_iso <= last_seen_ts:
-                continue
-            if self._point_local_date(point) != self._current_local_date():
                 continue
             new_points.append(point)
 
@@ -166,9 +204,9 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
             total_kwh = round(total_kwh + sum(point.kwh for point in new_points), 3)
             last_seen_ts = new_points[-1].ts.isoformat()
             _LOGGER.info(
-                "Added %s Empower intervals for %s; total is now %.3f kWh",
+                "Added %s Empower intervals through %s; total is now %.3f kWh",
                 len(new_points),
-                today_local_date,
+                last_seen_ts,
                 total_kwh,
             )
         elif data.points and not last_seen_ts:
@@ -178,7 +216,6 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
             "last_seen_ts": last_seen_ts,
             "last_ts": last_seen_ts,
             "total_kwh": total_kwh,
-            "tracked_local_date": today_local_date,
         }
         await self._async_save_cache()
         imported_through = (
