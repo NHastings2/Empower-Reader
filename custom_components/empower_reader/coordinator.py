@@ -136,10 +136,17 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
 
     async def _async_inject_statistics(
         self, points: list[EmpowerPoint], sum_base: float
-    ) -> float:
-        """Group points into hourly buckets and inject into the recorder. Returns new cumulative sum."""
-        if not _RECORDER_AVAILABLE or not points:
-            return sum_base
+    ) -> tuple[bool, float]:
+        """Group points into hourly buckets and inject into the recorder.
+
+        Returns (success, new_cumulative_sum). On failure returns (False, sum_base)
+        so the caller knows not to advance stats_through_ts.
+        """
+        if not _RECORDER_AVAILABLE:
+            _LOGGER.debug("Recorder not available; skipping statistics injection")
+            return False, sum_base
+        if not points:
+            return True, sum_base
 
         hourly: dict[datetime, float] = defaultdict(float)
         for point in points:
@@ -171,10 +178,10 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
                 stats[-1].start.isoformat(),
                 running_sum,
             )
+            return True, running_sum
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Failed to inject statistics into recorder: %s", exc)
-
-        return running_sum
+            return False, sum_base
 
     async def _async_update_data(self) -> EmpowerSnapshot:
         client = EmpowerClient(
@@ -245,13 +252,21 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
 
         stats_through_ts = str(electric.get("stats_through_ts", ""))
         stats_sum = float(electric.get("stats_sum", 0.0))
+
+        # If a previous injection failed after saving stats_through_ts, stats_sum will
+        # be 0 while stats_through_ts is non-empty. Reset so all points are retried.
+        if stats_through_ts and stats_sum == 0.0 and data.points:
+            _LOGGER.info("Resetting statistics cursor to retry failed injection")
+            stats_through_ts = ""
+
         stats_new_points: list[EmpowerPoint] = [
             p for p in data.points
             if not stats_through_ts or p.ts.isoformat() > stats_through_ts
         ]
         if stats_new_points:
-            stats_sum = await self._async_inject_statistics(stats_new_points, stats_sum)
-            stats_through_ts = stats_new_points[-1].ts.isoformat()
+            success, stats_sum = await self._async_inject_statistics(stats_new_points, stats_sum)
+            if success:
+                stats_through_ts = stats_new_points[-1].ts.isoformat()
 
         # --- persist ---
 
