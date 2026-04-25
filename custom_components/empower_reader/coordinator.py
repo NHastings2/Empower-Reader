@@ -188,8 +188,8 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
         try:
             async_add_external_statistics(self._hass, metadata, stats)
             last_start = stats[-1]["start"] if stats else None
-            _LOGGER.warning(
-                "Empower: injected %d hourly statistics through %s (cumulative %.3f kWh)",
+            _LOGGER.info(
+                "Injected %d hourly statistics through %s (cumulative %.3f kWh)",
                 len(stats),
                 last_start.isoformat() if last_start else "N/A",
                 running_sum,
@@ -200,7 +200,6 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
             return False, sum_base
 
     async def _async_update_data(self) -> EmpowerSnapshot:
-        _LOGGER.warning("Empower: coordinator update starting")
         client = EmpowerClient(
             Path(
                 self._hass.config.path(
@@ -215,11 +214,8 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
         except Exception as exc:
             raise UpdateFailed(str(exc)) from exc
 
-        _LOGGER.warning("Empower: fetch_data succeeded, points=%d", len(data.points))
-
         cache = await self._async_load_cache()
         electric = cache.get("electric", {})
-        _LOGGER.warning("Empower: cache loaded, electric keys=%s", list(electric.keys()))
         last_seen_ts = str(electric.get("last_seen_ts", ""))
         total_kwh = float(electric.get("total_kwh", 0.0))
         latest_visible_ts = data.points[-1].ts.isoformat() if data.points else ""
@@ -270,7 +266,6 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
         # Tracked independently so historical hours get correct timestamps in the
         # Energy Dashboard even when data arrives in batches.
 
-        _LOGGER.warning("Empower: reached statistics injection block")
         stats_through_ts = str(electric.get("stats_through_ts", ""))
         stats_sum = float(electric.get("stats_sum", 0.0))
 
