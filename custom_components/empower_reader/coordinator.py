@@ -140,24 +140,33 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
 
         # Import recorder classes lazily so any version mismatch only affects
         # statistics injection and does not prevent the integration from loading.
+        # Prefer recorder.models for the data classes — in HA 2026.x the versions
+        # exported from recorder.statistics may be TypedDicts (dicts) which cause
+        # attribute-access failures inside async_add_external_statistics.
         try:
             from homeassistant.components.recorder.statistics import (  # noqa: PLC0415
+                async_add_external_statistics,
+            )
+        except ImportError as exc:
+            _LOGGER.warning("Empower: recorder statistics API not available: %s", exc)
+            return False, sum_base
+
+        try:
+            from homeassistant.components.recorder.models import (  # noqa: PLC0415
                 StatisticData,
                 StatisticMetaData,
-                async_add_external_statistics,
             )
         except ImportError:
             try:
-                from homeassistant.components.recorder.models import (  # noqa: PLC0415
-                    StatisticData,
-                    StatisticMetaData,
-                )
                 from homeassistant.components.recorder.statistics import (  # noqa: PLC0415
-                    async_add_external_statistics,
+                    StatisticData,  # type: ignore[assignment]
+                    StatisticMetaData,  # type: ignore[assignment]
                 )
             except ImportError as exc:
-                _LOGGER.warning("Empower: recorder statistics API not available: %s", exc)
+                _LOGGER.warning("Empower: StatisticData/StatisticMetaData not found: %s", exc)
                 return False, sum_base
+
+        _LOGGER.warning("Empower: StatisticData type=%s", type(StatisticData))
 
         hourly: dict[datetime, float] = defaultdict(float)
         for point in points:
@@ -210,8 +219,11 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
         except Exception as exc:
             raise UpdateFailed(str(exc)) from exc
 
+        _LOGGER.warning("Empower: fetch_data succeeded, points=%d", len(data.points))
+
         cache = await self._async_load_cache()
         electric = cache.get("electric", {})
+        _LOGGER.warning("Empower: cache loaded, electric keys=%s", list(electric.keys()))
         last_seen_ts = str(electric.get("last_seen_ts", ""))
         total_kwh = float(electric.get("total_kwh", 0.0))
         latest_visible_ts = data.points[-1].ts.isoformat() if data.points else ""
@@ -262,6 +274,7 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
         # Tracked independently so historical hours get correct timestamps in the
         # Energy Dashboard even when data arrives in batches.
 
+        _LOGGER.warning("Empower: reached statistics injection block")
         stats_through_ts = str(electric.get("stats_through_ts", ""))
         stats_sum = float(electric.get("stats_sum", 0.0))
 
