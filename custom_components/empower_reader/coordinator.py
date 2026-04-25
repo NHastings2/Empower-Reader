@@ -195,7 +195,7 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
             return False, sum_base
 
     async def _async_update_data(self) -> EmpowerSnapshot:
-        _LOGGER.warning("Empower: coordinator update starting, recorder_available=%s", _RECORDER_AVAILABLE)
+        _LOGGER.warning("Empower: coordinator update starting")
         client = EmpowerClient(
             Path(
                 self._hass.config.path(
