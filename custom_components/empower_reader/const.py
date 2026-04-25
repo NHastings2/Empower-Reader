@@ -12,6 +12,7 @@ CONF_DATA_FILE = "data_file"
 CONF_SCAN_INTERVAL_MINUTES = "scan_interval_minutes"
 
 STORAGE_VERSION = 1
+STATISTICS_ID = f"{DOMAIN}:electric_energy"
 
 
 def sensor_entity_id(key: str) -> str:

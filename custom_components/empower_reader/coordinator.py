@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -17,10 +19,18 @@ from .const import (
     CONF_DATA_FILE,
     CONF_SCAN_INTERVAL_MINUTES,
     DEFAULT_DATA_FILE,
-    DEFAULT_SCAN_INTERVAL,
+    DEFAULT_SCAN_INTERVAL_MINUTES,
     DOMAIN,
+    STATISTICS_ID,
     STORAGE_VERSION,
 )
+
+try:
+    from homeassistant.components.recorder.models import StatisticData, StatisticMetaData
+    from homeassistant.components.recorder.statistics import async_import_statistics
+    _RECORDER_AVAILABLE = True
+except ImportError:
+    _RECORDER_AVAILABLE = False
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,23 +52,19 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
     ) -> None:
         scan_interval_minutes = entry.options.get(
             CONF_SCAN_INTERVAL_MINUTES,
-            entry.data.get(
-                CONF_SCAN_INTERVAL_MINUTES,
-                int(DEFAULT_SCAN_INTERVAL.total_seconds() // 60),
-            ),
+            entry.data.get(CONF_SCAN_INTERVAL_MINUTES, DEFAULT_SCAN_INTERVAL_MINUTES),
         )
         super().__init__(
             hass,
             logger=_LOGGER,
             name=DOMAIN,
-            update_interval=DEFAULT_SCAN_INTERVAL,
+            update_interval=timedelta(minutes=scan_interval_minutes),
         )
         self.config_entry = entry
         self._store = Store[dict[str, Any]](
             hass, STORAGE_VERSION, f"{DOMAIN}_{entry.entry_id}"
         )
         self._cache: dict[str, Any] | None = None
-        self.update_interval = timedelta(minutes=scan_interval_minutes)
         self._hass = hass
 
     def _point_start(self, point: EmpowerPoint) -> Any:
@@ -128,6 +134,48 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
         if self._cache is not None:
             await self._store.async_save(self._cache)
 
+    async def _async_inject_statistics(
+        self, points: list[EmpowerPoint], sum_base: float
+    ) -> float:
+        """Group points into hourly buckets and inject into the recorder. Returns new cumulative sum."""
+        if not _RECORDER_AVAILABLE or not points:
+            return sum_base
+
+        hourly: dict[datetime, float] = defaultdict(float)
+        for point in points:
+            utc = self._point_start(point)
+            hour_start = utc.replace(minute=0, second=0, microsecond=0)
+            hourly[hour_start] += point.kwh
+
+        metadata = StatisticMetaData(
+            has_mean=False,
+            has_sum=True,
+            name="Electric Energy",
+            source=DOMAIN,
+            statistic_id=STATISTICS_ID,
+            unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        )
+
+        stats: list[StatisticData] = []
+        running_sum = sum_base
+        for hour_start in sorted(hourly):
+            hour_kwh = round(hourly[hour_start], 3)
+            running_sum = round(running_sum + hour_kwh, 3)
+            stats.append(StatisticData(start=hour_start, state=hour_kwh, sum=running_sum))
+
+        try:
+            async_import_statistics(self._hass, metadata, stats)
+            _LOGGER.info(
+                "Injected %d hourly statistics through %s (cumulative %.3f kWh)",
+                len(stats),
+                stats[-1].start.isoformat(),
+                running_sum,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning("Failed to inject statistics into recorder: %s", exc)
+
+        return running_sum
+
     async def _async_update_data(self) -> EmpowerSnapshot:
         client = EmpowerClient(
             Path(
@@ -150,93 +198,72 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
         latest_visible_ts = data.points[-1].ts.isoformat() if data.points else ""
         visible_seed_total = self._visible_seed_total(data)
 
+        # --- total_kwh / last_seen_ts tracking (sensor state) ---
+
         if "tracked_local_date" in electric:
             total_kwh, last_seen_ts = self._initial_state_from_visible_data(data)
-            cache["electric"] = {
-                "last_seen_ts": last_seen_ts,
-                "last_ts": last_seen_ts,
-                "total_kwh": total_kwh,
-            }
-            await self._async_save_cache()
-            imported_through = (
-                self._parse_cached_point_time(last_seen_ts) if last_seen_ts else None
-            )
             _LOGGER.info(
                 "Migrated legacy Empower energy cache to monotonic mode at %.3f kWh through %s",
                 total_kwh,
                 last_seen_ts,
             )
-            return EmpowerSnapshot(
-                data=data,
-                total_kwh=total_kwh,
-                imported_through=imported_through,
-            )
-
-        if not electric:
+        elif not electric:
             total_kwh, last_seen_ts = self._initial_state_from_visible_data(data)
-            cache["electric"] = {
-                "last_seen_ts": last_seen_ts,
-                "last_ts": last_seen_ts,
-                "total_kwh": total_kwh,
-            }
-            await self._async_save_cache()
-            imported_through = (
-                self._parse_cached_point_time(last_seen_ts) if last_seen_ts else None
-            )
             _LOGGER.info(
                 "Started native Empower energy accumulation at %.3f kWh from interval %s",
                 total_kwh,
                 last_seen_ts,
             )
-            return EmpowerSnapshot(
-                data=data,
-                total_kwh=total_kwh,
-                imported_through=imported_through,
-            )
+        else:
+            if total_kwh == 0.0 and visible_seed_total > 0.0 and latest_visible_ts:
+                total_kwh = visible_seed_total
+                last_seen_ts = latest_visible_ts
+                _LOGGER.info(
+                    "Re-seeded Empower energy total from visible helper data at %.3f kWh",
+                    total_kwh,
+                )
 
-        if (
-            total_kwh == 0.0
-            and visible_seed_total > 0.0
-            and latest_visible_ts
-        ):
-            total_kwh = visible_seed_total
-            last_seen_ts = latest_visible_ts
-            cache["electric"] = {
-                "last_seen_ts": last_seen_ts,
-                "last_ts": last_seen_ts,
-                "total_kwh": total_kwh,
-            }
-            await self._async_save_cache()
-            _LOGGER.info(
-                "Re-seeded Empower energy total from visible helper data at %.3f kWh",
-                total_kwh,
-            )
+            new_points: list[EmpowerPoint] = [
+                p for p in data.points
+                if not last_seen_ts or p.ts.isoformat() > last_seen_ts
+            ]
+            if new_points:
+                total_kwh = round(total_kwh + sum(p.kwh for p in new_points), 3)
+                last_seen_ts = new_points[-1].ts.isoformat()
+                _LOGGER.info(
+                    "Added %s Empower intervals through %s; total is now %.3f kWh",
+                    len(new_points),
+                    last_seen_ts,
+                    total_kwh,
+                )
+            elif data.points and not last_seen_ts:
+                last_seen_ts = data.points[-1].ts.isoformat()
 
-        new_points: list[EmpowerPoint] = []
-        for point in data.points:
-            point_iso = point.ts.isoformat()
-            if last_seen_ts and point_iso <= last_seen_ts:
-                continue
-            new_points.append(point)
+        # --- recorder statistics injection ---
+        # Tracked independently so historical hours get correct timestamps in the
+        # Energy Dashboard even when data arrives in batches.
 
-        if new_points:
-            total_kwh = round(total_kwh + sum(point.kwh for point in new_points), 3)
-            last_seen_ts = new_points[-1].ts.isoformat()
-            _LOGGER.info(
-                "Added %s Empower intervals through %s; total is now %.3f kWh",
-                len(new_points),
-                last_seen_ts,
-                total_kwh,
-            )
-        elif data.points and not last_seen_ts:
-            last_seen_ts = data.points[-1].ts.isoformat()
+        stats_through_ts = str(electric.get("stats_through_ts", ""))
+        stats_sum = float(electric.get("stats_sum", 0.0))
+        stats_new_points: list[EmpowerPoint] = [
+            p for p in data.points
+            if not stats_through_ts or p.ts.isoformat() > stats_through_ts
+        ]
+        if stats_new_points:
+            stats_sum = await self._async_inject_statistics(stats_new_points, stats_sum)
+            stats_through_ts = stats_new_points[-1].ts.isoformat()
+
+        # --- persist ---
 
         cache["electric"] = {
             "last_seen_ts": last_seen_ts,
             "last_ts": last_seen_ts,
             "total_kwh": total_kwh,
+            "stats_through_ts": stats_through_ts,
+            "stats_sum": stats_sum,
         }
         await self._async_save_cache()
+
         imported_through = (
             self._parse_cached_point_time(last_seen_ts) if last_seen_ts else None
         )
