@@ -138,31 +138,16 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
         if not points:
             return True, sum_base
 
-        # Import the function lazily; guard against the integration failing to load.
+        # Import lazily so any API mismatch only affects statistics injection.
         try:
             from homeassistant.components.recorder.statistics import (  # noqa: PLC0415
+                StatisticData,
+                StatisticMetaData,
                 async_add_external_statistics,
             )
         except ImportError as exc:
             _LOGGER.warning("Empower: recorder statistics API not available: %s", exc)
             return False, sum_base
-
-        # In HA 2026.x StatisticData and StatisticMetaData are TypedDicts (dicts).
-        # async_add_external_statistics does stat.start attribute access internally,
-        # which fails on dicts. Import what we need for metadata/mean_type, but use
-        # our own dataclass for the per-stat objects so attribute access works.
-        try:
-            from homeassistant.components.recorder.models import (  # noqa: PLC0415
-                StatisticMetaData,
-            )
-        except ImportError:
-            try:
-                from homeassistant.components.recorder.statistics import (  # noqa: PLC0415
-                    StatisticMetaData,  # type: ignore[assignment]
-                )
-            except ImportError as exc:
-                _LOGGER.warning("Empower: StatisticMetaData not found: %s", exc)
-                return False, sum_base
 
         try:
             from homeassistant.components.recorder.statistics import (  # noqa: PLC0415
@@ -185,30 +170,28 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
             "source": DOMAIN,
             "statistic_id": STATISTICS_ID,
             "unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR,
+            "unit_class": "energy",
         }
         if mean_type_none is not None:
             meta_kwargs["mean_type"] = mean_type_none
         metadata = StatisticMetaData(**meta_kwargs)
 
-        @dataclass
-        class _Stat:
-            start: datetime
-            state: float | None = None
-            sum: float | None = None
-
-        stats: list[_Stat] = []
+        # StatisticData is a TypedDict in HA 2026.x — calling it with kwargs
+        # produces a plain dict which HA accesses via subscript internally.
+        stats: list[Any] = []
         running_sum = sum_base
         for hour_start in sorted(hourly):
             hour_kwh = round(hourly[hour_start], 3)
             running_sum = round(running_sum + hour_kwh, 3)
-            stats.append(_Stat(start=hour_start, state=hour_kwh, sum=running_sum))
+            stats.append(StatisticData(start=hour_start, state=hour_kwh, sum=running_sum))
 
         try:
             async_add_external_statistics(self._hass, metadata, stats)
+            last_start = stats[-1]["start"] if stats else None
             _LOGGER.warning(
                 "Empower: injected %d hourly statistics through %s (cumulative %.3f kWh)",
                 len(stats),
-                stats[-1].start.isoformat() if stats else "N/A",
+                last_start.isoformat() if last_start else "N/A",
                 running_sum,
             )
             return True, running_sum
