@@ -27,7 +27,7 @@ from .const import (
 
 try:
     from homeassistant.components.recorder.models import StatisticData, StatisticMetaData
-    from homeassistant.components.recorder.statistics import async_import_statistics
+    from homeassistant.components.recorder.statistics import async_add_external_statistics
     _RECORDER_AVAILABLE = True
 except ImportError:
     _RECORDER_AVAILABLE = False
@@ -164,7 +164,7 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
             stats.append(StatisticData(start=hour_start, state=hour_kwh, sum=running_sum))
 
         try:
-            async_import_statistics(self._hass, metadata, stats)
+            async_add_external_statistics(self._hass, metadata, stats)
             _LOGGER.info(
                 "Injected %d hourly statistics through %s (cumulative %.3f kWh)",
                 len(stats),
