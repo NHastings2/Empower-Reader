@@ -25,13 +25,6 @@ from .const import (
     STORAGE_VERSION,
 )
 
-try:
-    from homeassistant.components.recorder.models import StatisticData, StatisticMetaData
-    from homeassistant.components.recorder.statistics import async_add_external_statistics
-    _RECORDER_AVAILABLE = True
-except ImportError:
-    _RECORDER_AVAILABLE = False
-
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -142,11 +135,29 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
         Returns (success, new_cumulative_sum). On failure returns (False, sum_base)
         so the caller knows not to advance stats_through_ts.
         """
-        if not _RECORDER_AVAILABLE:
-            _LOGGER.debug("Recorder not available; skipping statistics injection")
-            return False, sum_base
         if not points:
             return True, sum_base
+
+        # Import recorder classes lazily so any version mismatch only affects
+        # statistics injection and does not prevent the integration from loading.
+        try:
+            from homeassistant.components.recorder.statistics import (  # noqa: PLC0415
+                StatisticData,
+                StatisticMetaData,
+                async_add_external_statistics,
+            )
+        except ImportError:
+            try:
+                from homeassistant.components.recorder.models import (  # noqa: PLC0415
+                    StatisticData,
+                    StatisticMetaData,
+                )
+                from homeassistant.components.recorder.statistics import (  # noqa: PLC0415
+                    async_add_external_statistics,
+                )
+            except ImportError as exc:
+                _LOGGER.warning("Empower: recorder statistics API not available: %s", exc)
+                return False, sum_base
 
         hourly: dict[datetime, float] = defaultdict(float)
         for point in points:
@@ -172,18 +183,19 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
 
         try:
             async_add_external_statistics(self._hass, metadata, stats)
-            _LOGGER.info(
-                "Injected %d hourly statistics through %s (cumulative %.3f kWh)",
+            _LOGGER.warning(
+                "Empower: injected %d hourly statistics through %s (cumulative %.3f kWh)",
                 len(stats),
                 stats[-1].start.isoformat(),
                 running_sum,
             )
             return True, running_sum
         except Exception as exc:  # noqa: BLE001
-            _LOGGER.warning("Failed to inject statistics into recorder: %s", exc)
+            _LOGGER.warning("Empower: failed to inject statistics into recorder: %s", exc)
             return False, sum_base
 
     async def _async_update_data(self) -> EmpowerSnapshot:
+        _LOGGER.warning("Empower: coordinator update starting, recorder_available=%s", _RECORDER_AVAILABLE)
         client = EmpowerClient(
             Path(
                 self._hass.config.path(
@@ -256,7 +268,7 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
         # If a previous injection failed after saving stats_through_ts, stats_sum will
         # be 0 while stats_through_ts is non-empty. Reset so all points are retried.
         if stats_through_ts and stats_sum == 0.0 and data.points:
-            _LOGGER.info("Resetting statistics cursor to retry failed injection")
+            _LOGGER.warning("Empower: resetting statistics cursor to retry failed injection")
             stats_through_ts = ""
 
         stats_new_points: list[EmpowerPoint] = [
