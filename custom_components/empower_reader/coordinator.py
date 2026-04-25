@@ -138,11 +138,7 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
         if not points:
             return True, sum_base
 
-        # Import recorder classes lazily so any version mismatch only affects
-        # statistics injection and does not prevent the integration from loading.
-        # Prefer recorder.models for the data classes — in HA 2026.x the versions
-        # exported from recorder.statistics may be TypedDicts (dicts) which cause
-        # attribute-access failures inside async_add_external_statistics.
+        # Import the function lazily; guard against the integration failing to load.
         try:
             from homeassistant.components.recorder.statistics import (  # noqa: PLC0415
                 async_add_external_statistics,
@@ -151,22 +147,30 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
             _LOGGER.warning("Empower: recorder statistics API not available: %s", exc)
             return False, sum_base
 
+        # In HA 2026.x StatisticData and StatisticMetaData are TypedDicts (dicts).
+        # async_add_external_statistics does stat.start attribute access internally,
+        # which fails on dicts. Import what we need for metadata/mean_type, but use
+        # our own dataclass for the per-stat objects so attribute access works.
         try:
             from homeassistant.components.recorder.models import (  # noqa: PLC0415
-                StatisticData,
                 StatisticMetaData,
             )
         except ImportError:
             try:
                 from homeassistant.components.recorder.statistics import (  # noqa: PLC0415
-                    StatisticData,  # type: ignore[assignment]
                     StatisticMetaData,  # type: ignore[assignment]
                 )
             except ImportError as exc:
-                _LOGGER.warning("Empower: StatisticData/StatisticMetaData not found: %s", exc)
+                _LOGGER.warning("Empower: StatisticMetaData not found: %s", exc)
                 return False, sum_base
 
-        _LOGGER.warning("Empower: StatisticData type=%s", type(StatisticData))
+        try:
+            from homeassistant.components.recorder.statistics import (  # noqa: PLC0415
+                StatisticMeanType,
+            )
+            mean_type_none = StatisticMeanType.NONE
+        except (ImportError, AttributeError):
+            mean_type_none = None
 
         hourly: dict[datetime, float] = defaultdict(float)
         for point in points:
@@ -174,28 +178,37 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
             hour_start = utc.replace(minute=0, second=0, microsecond=0)
             hourly[hour_start] += point.kwh
 
-        metadata = StatisticMetaData(
-            has_mean=False,
-            has_sum=True,
-            name="Electric Energy",
-            source=DOMAIN,
-            statistic_id=STATISTICS_ID,
-            unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        )
+        meta_kwargs: dict[str, Any] = {
+            "has_mean": False,
+            "has_sum": True,
+            "name": "Electric Energy",
+            "source": DOMAIN,
+            "statistic_id": STATISTICS_ID,
+            "unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR,
+        }
+        if mean_type_none is not None:
+            meta_kwargs["mean_type"] = mean_type_none
+        metadata = StatisticMetaData(**meta_kwargs)
 
-        stats: list[StatisticData] = []
+        @dataclass
+        class _Stat:
+            start: datetime
+            state: float | None = None
+            sum: float | None = None
+
+        stats: list[_Stat] = []
         running_sum = sum_base
         for hour_start in sorted(hourly):
             hour_kwh = round(hourly[hour_start], 3)
             running_sum = round(running_sum + hour_kwh, 3)
-            stats.append(StatisticData(start=hour_start, state=hour_kwh, sum=running_sum))
+            stats.append(_Stat(start=hour_start, state=hour_kwh, sum=running_sum))
 
         try:
             async_add_external_statistics(self._hass, metadata, stats)
             _LOGGER.warning(
                 "Empower: injected %d hourly statistics through %s (cumulative %.3f kWh)",
                 len(stats),
-                stats[-1].start.isoformat(),
+                stats[-1].start.isoformat() if stats else "N/A",
                 running_sum,
             )
             return True, running_sum
