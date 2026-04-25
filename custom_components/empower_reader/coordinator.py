@@ -25,13 +25,6 @@ from .const import (
     STORAGE_VERSION,
 )
 
-try:
-    from homeassistant.components.recorder.models import StatisticData, StatisticMetaData
-    from homeassistant.components.recorder.statistics import async_add_external_statistics
-    _RECORDER_AVAILABLE = True
-except ImportError:
-    _RECORDER_AVAILABLE = False
-
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -142,11 +135,29 @@ class EmpowerDataUpdateCoordinator(DataUpdateCoordinator[EmpowerSnapshot]):
         Returns (success, new_cumulative_sum). On failure returns (False, sum_base)
         so the caller knows not to advance stats_through_ts.
         """
-        if not _RECORDER_AVAILABLE:
-            _LOGGER.warning("Empower: recorder not available, skipping statistics injection")
-            return False, sum_base
         if not points:
             return True, sum_base
+
+        # Import recorder classes lazily so any version mismatch only affects
+        # statistics injection and does not prevent the integration from loading.
+        try:
+            from homeassistant.components.recorder.statistics import (  # noqa: PLC0415
+                StatisticData,
+                StatisticMetaData,
+                async_add_external_statistics,
+            )
+        except ImportError:
+            try:
+                from homeassistant.components.recorder.models import (  # noqa: PLC0415
+                    StatisticData,
+                    StatisticMetaData,
+                )
+                from homeassistant.components.recorder.statistics import (  # noqa: PLC0415
+                    async_add_external_statistics,
+                )
+            except ImportError as exc:
+                _LOGGER.warning("Empower: recorder statistics API not available: %s", exc)
+                return False, sum_base
 
         hourly: dict[datetime, float] = defaultdict(float)
         for point in points:
